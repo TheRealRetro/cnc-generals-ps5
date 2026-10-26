@@ -10,7 +10,10 @@ code (via TheSuperHackers) that already runs 64-bit on Linux and macOS through
 DXVK (DirectX 8 to Vulkan), SDL3 and MiniAudio. This port swaps the
 desktop platform pieces for PS5 ones.
 
-**Status: work in progress, not playable yet.** See [Milestones](#milestones).
+**Status: playable.** On a PS5 (firmware 13.60, ShadowMountPlus) with the
+retail 1.00 discs: the menus, skirmish, the campaign and its videos, Options,
+the DualSense and sound all work. Not yet tested: saving and loading, USB mouse
+and keyboard, LAN. See [Milestones](#milestones).
 
 Game data is **not** included. You need your own retail copy; the `.ffpkg`
 built from it contains EA's files and is for your own console only.
@@ -25,7 +28,7 @@ built from it contains EA's files and is for your own console only.
 | Window, input, events | SDL3 | SDL3 with PS5 drivers: `VK_KHR_display` surface, DualSense, USB mouse and keyboard |
 | Audio | MiniAudio | MiniAudio with a `sceAudioOut` backend |
 | Videos (Bink) | FFmpeg | FFmpeg 7.1 with only the Bink demuxer and decoders (LGPL) |
-| Online | GeneralsOnline, curl | off (skirmish, campaign, LAN later) |
+| Online | GeneralsOnline, curl | off (GameSpy's servers are gone; LAN untested) |
 | libc gaps, heap, threads | glibc | [PS5_PayloadSDK](https://github.com/mihawk-99/PS5_PayloadSDK) platform layer |
 | Packaging | — | signed `eboot.bin` + `sce_sys/` title folder, then `.ffpkg` |
 
@@ -171,10 +174,10 @@ from that avoids the class of problem altogether.
 ## Milestones
 
 1. **Pipeline**: title link, signing and `.ffpkg` packing. Done: the first console test (FW 13.60) found the images unmountable, fixed in `build-makefs.sh`; the rebuilt game image mounts, installs and launches.
-2. **Driver**: RADV release archive built for the console; PS5_VulkanTemplate's sample title (`PPSA99130`) rebuilt with it as a known-good Vulkan check. Built; awaiting a console test.
-3. **DXVK on PS5**: D3D8 smoke test title (`PPSA99204`, `ps5/d3d8test/`): SDL3 with PS5 drivers + DXVK D3D8 + RADV, DualSense, USB mouse and keyboard. Built; awaiting a console test.
+2. **Driver**: RADV release archive built for the console; PS5_VulkanTemplate's sample title (`PPSA99130`) rebuilt with it as a known-good Vulkan check. Done: the game renders with this driver on the console.
+3. **DXVK on PS5**: D3D8 smoke test title (`PPSA99204`, `ps5/d3d8test/`): SDL3 with PS5 drivers + DXVK D3D8 + RADV, DualSense, USB mouse and keyboard. Done: the game runs on this stack on the console.
 4. **Engine boots**: GeneralsX reaches the main menu. **Reached** on a PS5 (FW 13.60, ShadowMountPlus 1.7-beta5fix1) with `PPSA99203-generals.ffpkg`, 2026-10-14.
-5. **Playable**: skirmish with DualSense + mouse/keyboard, audio. **Reached** 2026-10-14: a full skirmish with the DualSense through to the score screen, Options in the menu and in game, and a clean exit, on the 1.00 data. Untested: the campaign, mouse and keyboard, LAN.
+5. **Playable**: skirmish with DualSense + mouse/keyboard, audio. **Reached** 2026-10-14: a full skirmish with the DualSense through to the score screen, Options in the menu and in game, and a clean exit, on the 1.00 data. Untested: USB mouse and keyboard.
 6. **Complete**: campaign videos (Bink via FFmpeg), saves, LAN. The campaign and its videos (EA logo, intro, briefings) play on the console (2026-10-14). Untested: saves and loads, LAN.
 
 ## Pinned upstreams
