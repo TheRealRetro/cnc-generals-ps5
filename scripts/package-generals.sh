@@ -52,6 +52,40 @@ done
 cp /usr/share/doc/fonts-liberation/copyright "$APP/fonts/LICENSE-Liberation.txt"
 cp /usr/share/doc/fonts-liberation-sans-narrow/copyright "$APP/fonts/LICENSE-Liberation-Sans-Narrow.txt"
 
+# Licences: the program's (GPL-3.0 and EA's terms), the notice that lists what
+# it is built from (ps5/generals/licenses/NOTICE.md), and each component's
+# licence text, from the sources the build used. A missing text stops packing.
+rm -rf "$APP/licenses"
+mkdir -p "$APP/licenses"
+deps=$PS5_BUILD/generals/_deps
+zlib_src=$PS5_BUILD/generals/Core/Libraries/Source/Compression/_deps/zlib-1.1.4-src/ZLib
+cp "$project/LICENSE" "$project/EA-ADDITIONAL-TERMS.md" "$project/ps5/generals/licenses/NOTICE.md" "$APP/licenses/"
+while read -r source target; do
+    cp "$source" "$APP/licenses/$target"
+done <<EOF
+$deps/gamespy-src/LICENSE GameSpy-LICENSE
+$deps/gamemath-src/LICENSE.md GameMath-LICENSE.md
+$deps/miniaudio-src/LICENSE miniaudio-LICENSE
+$deps/stb-src/LICENSE stb-LICENSE
+$PS5_SRC/SDL/LICENSE.txt SDL-LICENSE.txt
+$PS5_SRC/thirdparty/SDL_image/LICENSE.txt SDL_image-LICENSE.txt
+$PS5_SRC/thirdparty/freetype/LICENSE.TXT FreeType-LICENSE.TXT
+$PS5_SRC/thirdparty/freetype/docs/FTL.TXT FreeType-FTL.TXT
+$PS5_SRC/thirdparty/glm/copying.txt GLM-copying.txt
+$PS5_SRC/dxvk/LICENSE DXVK-LICENSE
+$PS5_SRC/dxvk/subprojects/libdisplay-info/LICENSE libdisplay-info-LICENSE
+$PS5_SRC/thirdparty/ffmpeg/COPYING.LGPLv2.1 FFmpeg-COPYING.LGPLv2.1
+$PS5_SRC/thirdparty/ffmpeg/LICENSE.md FFmpeg-LICENSE.md
+$PS5_DEPS/PS5_Mesa/docs/license.rst Mesa-license.rst
+$PS5_DEPS/PS5_Mesa/licenses/MIT Mesa-MIT
+EOF
+# zlib 1.1.4 and LZH-Light carry their notices in their sources.
+sed -n '/Copyright (C) 1995-2002/,/madler@alumni.caltech.edu/p' "$zlib_src/zlib.h" > "$APP/licenses/zlib-1.1.4.txt"
+sed -n '2,12p' "$deps/lzhl-src/CompLibHeader/Lzhl.cpp" | sed 's/^ \*\{0,1\} \{0,2\}//' > "$APP/licenses/LZHL.txt"
+for text in zlib-1.1.4.txt LZHL.txt; do
+    [ -s "$APP/licenses/$text" ] || { echo "error: no licence text for $text" >&2; exit 1; }
+done
+
 if [ "$WITH_DATA" = 1 ]; then
     name=PPSA99203-generals
 else
