@@ -15,8 +15,8 @@ bash "$here/sync-src.sh" GeneralsX ps5 scripts >/dev/null
 
 B=$PS5_BUILD/generals
 mkdir -p "$B/sce_sys"
-cp "$project/ps5/generals/sce_sys/param.json" "$B/sce_sys/"
-[ -f "$B/sce_sys/icon0.png" ] || python3 "$here/make-icon.py" "$B/sce_sys/icon0.png" "C&C" GENERALS
+# The title's settings and its 512x512 icon (resized from ps5/assets/).
+cp "$project/ps5/generals/sce_sys/param.json" "$project/ps5/generals/sce_sys/icon0.png" "$B/sce_sys/"
 
 if [ ! -f "$B/build.ninja" ] || [ ! -f "$B/CMakeCache.txt" ]; then
     cmake -S "$PS5_SRC/GeneralsX" -B "$B" -G Ninja -DCMAKE_TOOLCHAIN_FILE="$PS5_TOOLCHAIN" \
@@ -36,3 +36,6 @@ if [ ! -f "$B/build.ninja" ] || [ ! -f "$B/CMakeCache.txt" ]; then
         > "$B.configure.log" 2>&1 || { tail -40 "$B.configure.log" >&2; exit 1; }
 fi
 ninja -C "$B" "$@" g_generals
+# The link step copies sce_sys into the title folder; this keeps it current
+# when only the icon or the settings changed and nothing was relinked.
+cp "$B/sce_sys/param.json" "$B/sce_sys/icon0.png" "$PS5_GENERALS_WS/dist/PPSA99203/sce_sys/"
