@@ -1,0 +1,2336 @@
+From bca473ca910e3147a82a777ef003987a6fcc9854 Mon Sep 17 00:00:00 2001
+From: TheRealRetro <225269622+TheRealRetro@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 14:25:07 -0400
+Subject: [PATCH] PS5 port of C&C Generals: GeneralsX changes
+
+Changes for the native PS5 homebrew build (see cnc-generals-ps5).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ CMakeLists.txt                                |   3 +
+ .../Include/GameClient/LookAtXlat.h           |   7 +-
+ Core/GameEngine/Source/Common/INI/INI.cpp     |   3 +-
+ .../Source/Common/System/GameMemoryNull.cpp   |   3 +-
+ .../Source/Common/System/UnicodeString.cpp    |   5 +-
+ .../GameClient/MessageStream/LookAtXlat.cpp   |  27 ++
+ .../GameSpy/Thread/BuddyThread.cpp            |   4 +-
+ .../GameSpy/Thread/GameResultsThread.cpp      |   4 +-
+ .../GameNetwork/GameSpy/Thread/PeerThread.cpp |   4 +-
+ .../Thread/PersistentStorageThread.cpp        |   4 +-
+ .../GameNetwork/GameSpy/Thread/PingThread.cpp |   4 +-
+ Core/GameEngineDevice/CMakeLists.txt          |   7 +-
+ .../MiniAudioDevice/MiniAudioPS5Backend.h     | 206 +++++++++++
+ .../MiniAudioDevice/MiniAudioManager.cpp      |  61 ++-
+ .../StdDevice/Common/StdLocalFileSystem.cpp   |   3 +-
+ Core/Libraries/Include/D3D8Stub.h             |   3 +-
+ .../Source/WWVegas/WW3D2/CMakeLists.txt       |   6 +
+ .../Source/WWVegas/WW3D2/dx8wrapper.cpp       |  11 +
+ .../Source/WWVegas/WW3D2/render2dsentence.cpp |  22 +-
+ .../Source/WWVegas/WW3D2/render2dsentence.h   |   3 +-
+ .../Source/WWVegas/WWLib/FastAllocator.h      |   3 +-
+ Core/Libraries/Source/WWVegas/WWLib/TARGA.cpp |   3 +-
+ Core/Libraries/Source/WWVegas/WWLib/bittype.h |   3 +-
+ Core/Libraries/Source/WWVegas/WWLib/ini.cpp   |   3 +-
+ Core/Libraries/Source/WWVegas/WWLib/osdep.h   |   5 +
+ Dependencies/Miles/mss/mss.h                  |   3 +-
+ Dependencies/Utility/Utility/endian_compat.h  |   6 +-
+ Dependencies/Utility/Utility/mem_compat.h     |   5 +
+ .../Code/CompatLib/Include/memory_compat.h    |   5 +-
+ .../GameEngine/Source/Common/GlobalData.cpp   |   6 +
+ .../GUI/GUICallbacks/Menus/OptionsMenu.cpp    |  17 +-
+ Generals/Code/GameEngineDevice/CMakeLists.txt |   3 +
+ .../SDL3Device/GameClient/SDL3Gamepad.h       |  80 ++++
+ .../Include/SDL3Device/GameClient/SDL3Mouse.h |   9 +
+ .../GameEngineDevice/Include/SDL3GameEngine.h |   5 +
+ .../W3DDevice/GameClient/W3DGameClient.h      |  12 +
+ .../SDL3Device/GameClient/SDL3Gamepad.cpp     | 347 ++++++++++++++++++
+ .../SDL3Device/GameClient/SDL3Mouse.cpp       | 172 ++++++++-
+ .../Source/SDL3GameEngine.cpp                 |  14 +-
+ Generals/Code/Main/CMakeLists.txt             |   8 +
+ Generals/Code/Main/SDL3Main.cpp               |  62 ++++
+ GeneralsMD/Code/CompatLib/CMakeLists.txt      |   5 +-
+ .../Code/CompatLib/Include/memory_compat.h    |   5 +-
+ .../Code/CompatLib/Source/module_compat.cpp   |   7 +-
+ cmake/config-build.cmake                      |   6 +
+ cmake/dx8.cmake                               |   9 +
+ cmake/gamemath.cmake                          |  10 +
+ cmake/gamespy.cmake                           |   8 +
+ cmake/miniaudio.cmake                         |   5 +
+ cmake/patches/gamemath-ps5.cmake              |  27 ++
+ cmake/patches/gamespy-ps5.cmake               |  27 ++
+ cmake/ps5.cmake                               |  34 ++
+ cmake/sdl3.cmake                              |  12 +-
+ cmake/zlib.cmake                              |  18 +
+ 54 files changed, 1282 insertions(+), 52 deletions(-)
+ create mode 100644 Core/GameEngineDevice/Include/MiniAudioDevice/MiniAudioPS5Backend.h
+ create mode 100644 Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Gamepad.h
+ create mode 100644 Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Gamepad.cpp
+ create mode 100644 cmake/patches/gamemath-ps5.cmake
+ create mode 100644 cmake/patches/gamespy-ps5.cmake
+ create mode 100644 cmake/ps5.cmake
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index c8b8b836a..880b5ddae 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -37,6 +37,9 @@ include(cmake/config-vcpkg.cmake)
+ # Top level project, doesn't really affect anything.
+ project(genzh LANGUAGES C CXX)
+ 
++# GeneralsX @build PS5 13/10/2026 PlayStation 5 title link (only when the PS5 toolchain is used)
++include(cmake/ps5.cmake)
++
+ # GeneralsX @build BenderAI 10/02/2026
+ # Linux port: Make CompatLib headers globally accessible so Core libraries (WWLib, WWMath, etc.)
+ # can access platform compatibility types when building for non-Windows platforms
+diff --git a/Core/GameEngine/Include/GameClient/LookAtXlat.h b/Core/GameEngine/Include/GameClient/LookAtXlat.h
+index e799c32e9..6673ca631 100644
+--- a/Core/GameEngine/Include/GameClient/LookAtXlat.h
++++ b/Core/GameEngine/Include/GameClient/LookAtXlat.h
+@@ -53,6 +53,9 @@ public:
+ 	Bool hasMouseMovedRecently();
+ 	void setCurrentPos( const ICoord2D& pos );
+ 	void setScreenEdgeScrollMode(ScreenEdgeScrollMode mode);
++	// GeneralsX @feature PS5 13/10/2026 Analog scrolling from a gamepad stick: each component in [-1, 1],
++	// where 1 scrolls at the keyboard scroll speed. Zero stops it.
++	void setStickScroll(Real x, Real y);
+ 
+ 	void resetModes(); //Used when disabling input, so when we reenable it we aren't stuck in a mode.
+ 
+@@ -66,7 +69,8 @@ private:
+ 		SCROLL_NONE = 0,
+ 		SCROLL_RMB,
+ 		SCROLL_KEY,
+-		SCROLL_SCREENEDGE
++		SCROLL_SCREENEDGE,
++		SCROLL_STICK
+ 	};
+ 	ICoord2D m_anchor;
+ 	ICoord2D m_originalAnchor;
+@@ -83,6 +87,7 @@ private:
+ 	ScrollType m_scrollType;
+ 	ScreenEdgeScrollMode m_screenEdgeScrollMode;
+ 	UnsignedInt m_lastMouseMoveTimeMsec;				// real-time in milliseconds when mouse last moved
++	Coord2D m_stickScroll;											// gamepad stick deflection, see setStickScroll()
+ 
+ 	void setScrolling( ScrollType scrollType );
+ 	void stopScrolling();
+diff --git a/Core/GameEngine/Source/Common/INI/INI.cpp b/Core/GameEngine/Source/Common/INI/INI.cpp
+index aec9553cd..9ad4b80ed 100644
+--- a/Core/GameEngine/Source/Common/INI/INI.cpp
++++ b/Core/GameEngine/Source/Common/INI/INI.cpp
+@@ -1685,7 +1685,8 @@ Type scanType(std::string_view token)
+         if constexpr (std::is_floating_point_v<Type>)
+         {
+                 // GeneralsX @bugfix BenderAI 07/04/2026 Apple SDKs in our deployment target do not expose std::from_chars for floats.
+-                #if defined(__APPLE__)
++                // GeneralsX @build PS5 13/10/2026 Neither does the PS5 SDK libc++.
++                #if defined(__APPLE__) || defined(__PROSPERO__)
+                 const std::string tokenString(token);
+                 char *end = nullptr;
+                 errno = 0;
+diff --git a/Core/GameEngine/Source/Common/System/GameMemoryNull.cpp b/Core/GameEngine/Source/Common/System/GameMemoryNull.cpp
+index 3fc1bead8..ee7f58c96 100644
+--- a/Core/GameEngine/Source/Common/System/GameMemoryNull.cpp
++++ b/Core/GameEngine/Source/Common/System/GameMemoryNull.cpp
+@@ -19,7 +19,8 @@
+ #include "PreRTS.h"
+ 
+ // GeneralsX @bugfix BenderAI 24/02/2026 Phase 5 - malloc.h not on macOS
+-#ifdef __APPLE__
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) has no usable <malloc.h> either
++#if defined(__APPLE__) || defined(__FreeBSD__)
+ #include <stdlib.h>
+ #else
+ #include <malloc.h>
+diff --git a/Core/GameEngine/Source/Common/System/UnicodeString.cpp b/Core/GameEngine/Source/Common/System/UnicodeString.cpp
+index d3012cffa..84ee3c3cb 100644
+--- a/Core/GameEngine/Source/Common/System/UnicodeString.cpp
++++ b/Core/GameEngine/Source/Common/System/UnicodeString.cpp
+@@ -575,12 +575,13 @@ void UnicodeString::format_va(const WideChar* format, va_list args)
+ 	// GeneralsX @bugfix fbraz 03/06/2026 vswprintf rejects non-ASCII wide chars in the C locale
+ 	// (returns -1 for any format string containing e.g. Cyrillic). Use a UTF-8 locale for
+ 	// the duration of the call so Cyrillic format strings pass through correctly.
+-#ifndef _WIN32
++	// GeneralsX @build PS5 13/10/2026 The PS5 exports no uselocale(); its vswprintf stays in the C locale.
++#if !defined(_WIN32) && !defined(__PROSPERO__)
+ 	static locale_t s_utf8_locale = newlocale(LC_CTYPE_MASK, "UTF-8", (locale_t)0);
+ 	locale_t old_locale = uselocale(s_utf8_locale);
+ #endif
+ 	const int result = vswprintf(buf, sizeof(buf)/sizeof(WideChar), effectiveFormat, args);
+-#ifndef _WIN32
++#if !defined(_WIN32) && !defined(__PROSPERO__)
+ 	uselocale(old_locale);
+ #endif
+ 	if (result >= 0)
+diff --git a/Core/GameEngine/Source/GameClient/MessageStream/LookAtXlat.cpp b/Core/GameEngine/Source/GameClient/MessageStream/LookAtXlat.cpp
+index 59662197f..e87187747 100644
+--- a/Core/GameEngine/Source/GameClient/MessageStream/LookAtXlat.cpp
++++ b/Core/GameEngine/Source/GameClient/MessageStream/LookAtXlat.cpp
+@@ -148,6 +148,7 @@ LookAtTranslator::LookAtTranslator() :
+ 	m_anchor.x = m_anchor.y = 0;
+ 	m_currentPos.x = m_currentPos.y = 0;
+ 	m_originalAnchor.x = m_originalAnchor.y = 0;
++	m_stickScroll.x = m_stickScroll.y = 0.0f;
+ 
+ 	OptionPreferences prefs;
+ 	m_screenEdgeScrollMode = prefs.getScreenEdgeScrollMode();
+@@ -192,6 +193,13 @@ void LookAtTranslator::setScreenEdgeScrollMode(ScreenEdgeScrollMode mode)
+ 	m_screenEdgeScrollMode = mode;
+ }
+ 
++//-----------------------------------------------------------------------------
++void LookAtTranslator::setStickScroll(Real x, Real y)
++{
++	m_stickScroll.x = x;
++	m_stickScroll.y = y;
++}
++
+ //-----------------------------------------------------------------------------
+ /**
+  * The LookAt Translator is responsible for camera movements. It is directly responsible for
+@@ -442,6 +450,19 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage
+ 		{
+ 			Coord2D offset = {0, 0};
+ 
++			// GeneralsX @feature PS5 13/10/2026 A deflected gamepad stick scrolls like a held key, unless
++			// another scroll is under way.
++			const Bool stickDeflected = m_stickScroll.x != 0.0f || m_stickScroll.y != 0.0f;
++			if (stickDeflected && !m_isScrolling && !TheInGameUI->isSelecting() &&
++				!(TheShell && TheShell->isShellActive()))
++			{
++				setScrolling(SCROLL_STICK);
++			}
++			else if (!stickDeflected && m_isScrolling && m_scrollType == SCROLL_STICK)
++			{
++				stopScrolling();
++			}
++
+ 			if (m_isScrolling && !TheInGameUI->isScrolling())
+ 			{
+ 				// If we've been forced to stop scrolling (script action?)
+@@ -528,6 +549,12 @@ GameMessageDisposition LookAtTranslator::translateGameMessage(const GameMessage
+ 						}
+ 					}
+ 					break;
++				case SCROLL_STICK:
++					{
++						offset.x = TheGlobalData->m_horizontalScrollSpeedFactor * fpsRatio * SCROLL_AMT * TheGlobalData->m_keyboardScrollFactor * m_stickScroll.x;
++						offset.y = TheGlobalData->m_verticalScrollSpeedFactor * fpsRatio * SCROLL_AMT * TheGlobalData->m_keyboardScrollFactor * m_stickScroll.y;
++					}
++					break;
+ 				}
+ 
+ 				TheInGameUI->setScrollAmount(offset);
+diff --git a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/BuddyThread.cpp b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/BuddyThread.cpp
+index 0e4d996d4..b71689ca8 100644
+--- a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/BuddyThread.cpp
++++ b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/BuddyThread.cpp
+@@ -31,7 +31,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ #include <cxxabi.h>
+ #endif
+ 
+@@ -389,7 +389,7 @@ void BuddyThreadClass::Thread_Function()
+ 	}
+ 
+ 	gpDestroy( con );
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ 	} catch ( abi::__forced_unwind& ) {
+ 		throw;
+ #endif
+diff --git a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/GameResultsThread.cpp b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/GameResultsThread.cpp
+index 71e62094c..86392cf46 100644
+--- a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/GameResultsThread.cpp
++++ b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/GameResultsThread.cpp
+@@ -28,7 +28,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ #include <cxxabi.h>
+ #endif
+ 
+@@ -275,7 +275,7 @@ void GameResultsThreadClass::Thread_Function()
+ 	}
+ 
+ 	WSACleanup();
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ 	} catch ( abi::__forced_unwind& ) {
+ 		throw;
+ #endif
+diff --git a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PeerThread.cpp b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PeerThread.cpp
+index 8f5726a44..c95a5e195 100644
+--- a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PeerThread.cpp
++++ b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PeerThread.cpp
+@@ -31,7 +31,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ #include <cxxabi.h>
+ #endif
+ 
+@@ -1806,7 +1806,7 @@ void PeerThreadClass::Thread_Function()
+ 	DEBUG_LOG(("voluntarily ending peer thread %d", running));
+ 	peerShutdown( peer );
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ 	} catch ( abi::__forced_unwind& ) {
+ 		throw;
+ #endif
+diff --git a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PersistentStorageThread.cpp b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PersistentStorageThread.cpp
+index e879dfb29..0ab3b45a5 100644
+--- a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PersistentStorageThread.cpp
++++ b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PersistentStorageThread.cpp
+@@ -31,7 +31,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ #include <cxxabi.h>
+ #endif
+ 
+@@ -1076,7 +1076,7 @@ void PSThreadClass::Thread_Function()
+ 
+ 	if (IsStatsConnected())
+ 		CloseStatsConnection();
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ 	} catch ( abi::__forced_unwind& ) {
+ 		throw;
+ #endif
+diff --git a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PingThread.cpp b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PingThread.cpp
+index dcb64d7d0..a7251131d 100644
+--- a/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PingThread.cpp
++++ b/Core/GameEngine/Source/GameNetwork/GameSpy/Thread/PingThread.cpp
+@@ -28,7 +28,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ #include <cxxabi.h>
+ #endif
+ 
+@@ -331,7 +331,7 @@ void PingThreadClass::Thread_Function()
+ 	}
+ 
+ 	WSACleanup();
+-#if defined(_UNIX) && !defined(__APPLE__)
++#if defined(_UNIX) && !defined(__APPLE__) && !defined(__PROSPERO__) // GeneralsX @build PS5 13/10/2026 libc++ has no abi::__forced_unwind
+ 	} catch ( abi::__forced_unwind& ) {
+ 		throw;
+ #endif
+diff --git a/Core/GameEngineDevice/CMakeLists.txt b/Core/GameEngineDevice/CMakeLists.txt
+index e620ddf44..f4305a6f5 100644
+--- a/Core/GameEngineDevice/CMakeLists.txt
++++ b/Core/GameEngineDevice/CMakeLists.txt
+@@ -313,8 +313,11 @@ if(SAGE_USE_MINIAUDIO)
+ endif()
+ 
+ if(RTS_BUILD_OPTION_FFMPEG)
+-    find_package(PkgConfig REQUIRED)
+-    pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
++    # GeneralsX @build PS5 13/10/2026 The PS5 build makes PkgConfig::FFMPEG itself (cmake/ps5.cmake)
++    if(NOT TARGET PkgConfig::FFMPEG)
++        find_package(PkgConfig REQUIRED)
++        pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavcodec libavformat libavutil libswscale)
++    endif()
+ 
+     if(FFMPEG_FOUND)
+         target_sources(corei_gameenginedevice_private INTERFACE
+diff --git a/Core/GameEngineDevice/Include/MiniAudioDevice/MiniAudioPS5Backend.h b/Core/GameEngineDevice/Include/MiniAudioDevice/MiniAudioPS5Backend.h
+new file mode 100644
+index 000000000..2aa3304fa
+--- /dev/null
++++ b/Core/GameEngineDevice/Include/MiniAudioDevice/MiniAudioPS5Backend.h
+@@ -0,0 +1,206 @@
++/*
++**	Command & Conquer Generals(tm)
++**	Copyright 2025 Electronic Arts Inc.
++**
++**	This program is free software: you can redistribute it and/or modify
++**	it under the terms of the GNU General Public License as published by
++**	the Free Software Foundation, either version 3 of the License, or
++**	(at your option) any later version.
++**
++**	This program is distributed in the hope that it will be useful,
++**	but WITHOUT ANY WARRANTY; without even the implied warranty of
++**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++**	GNU General Public License for more details.
++**
++**	You should have received a copy of the GNU General Public License
++**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++// MiniAudioPS5Backend.h - MiniAudio playback on the PlayStation 5's AudioOut.
++//
++// GeneralsX @feature PS5 13/10/2026 None of MiniAudio's backends exists on the console. This is a
++// custom backend in MiniAudio's blocking-write form: MiniAudio's own audio thread calls
++// onDeviceWrite, which hands the console 256-frame grains of 48 kHz interleaved stereo 16-bit
++// samples; sceAudioOutOutput blocks until the console takes one, which paces the thread.
++// The calls and the port setup are the ones PS5_VulkanTemplate and PS5_vkQuake run on hardware.
++//
++// Include once, after the MiniAudio implementation, in MiniAudioManager.cpp.
++
++#pragma once
++
++#if defined(SAGE_PLATFORM_PS5)
++
++#include <cstdint>
++#include <cstring>
++
++extern "C" {
++int sceAudioOutInit(void);
++int sceAudioOutOpen(int32_t user, int32_t type, int32_t index, uint32_t grain, uint32_t rate, uint32_t format);
++int sceAudioOutOutput(int32_t port, const void *samples);
++int sceAudioOutClose(int32_t port);
++}
++
++namespace MiniAudioPS5 {
++
++static const ma_uint32 kGrainFrames = 256;
++static const ma_uint32 kSampleRate = 48000;
++static const ma_uint32 kChannels = 2;
++static const int32_t kSystemUser = 0xff;
++static const int32_t kPortMain = 0;
++static const uint32_t kFormatS16Stereo = 1;
++static const int kAlreadyInitialized = (int)0x8026000e;
++
++// The game opens one playback device.
++static int32_t s_port = -1;
++static int16_t s_grain[kGrainFrames * kChannels] __attribute__((aligned(64)));
++static ma_uint32 s_grainFill = 0;
++
++static void fillDeviceInfo(ma_device_info *info)
++{
++	memset(info, 0, sizeof(*info));
++	ma_strncpy_s(info->name, sizeof(info->name), "PS5 AudioOut", (size_t)-1);
++	info->isDefault = MA_TRUE;
++	info->nativeDataFormatCount = 1;
++	info->nativeDataFormats[0].format = ma_format_s16;
++	info->nativeDataFormats[0].channels = kChannels;
++	info->nativeDataFormats[0].sampleRate = kSampleRate;
++	info->nativeDataFormats[0].flags = 0;
++}
++
++static ma_result onContextEnumerateDevices(ma_context *context, ma_enum_devices_callback_proc callback, void *userData)
++{
++	ma_device_info info;
++	fillDeviceInfo(&info);
++	callback(context, ma_device_type_playback, &info, userData);
++	return MA_SUCCESS;
++}
++
++static ma_result onContextGetDeviceInfo(ma_context *context, ma_device_type type, const ma_device_id *id, ma_device_info *info)
++{
++	(void)context;
++	(void)id;
++	if (type != ma_device_type_playback) {
++		return MA_NO_DEVICE;
++	}
++	fillDeviceInfo(info);
++	return MA_SUCCESS;
++}
++
++static ma_result onDeviceInit(ma_device *device, const ma_device_config *config, ma_device_descriptor *playback, ma_device_descriptor *capture)
++{
++	(void)device;
++	(void)capture;
++	if (config->deviceType != ma_device_type_playback) {
++		return MA_DEVICE_TYPE_NOT_SUPPORTED;
++	}
++	if (s_port >= 0) {
++		return MA_DEVICE_ALREADY_INITIALIZED;
++	}
++
++	playback->format = ma_format_s16;
++	playback->channels = kChannels;
++	playback->sampleRate = kSampleRate;
++	ma_channel_map_init_standard(ma_standard_channel_map_default, playback->channelMap, MA_MAX_CHANNELS, kChannels);
++	playback->periodSizeInFrames = kGrainFrames;
++	playback->periodCount = 2;
++
++	s_port = sceAudioOutOpen(kSystemUser, kPortMain, 0, kGrainFrames, kSampleRate, kFormatS16Stereo);
++	if (s_port < 0) {
++		fprintf(stderr, "AUDIO: sceAudioOutOpen failed: 0x%08x\n", (unsigned)s_port);
++		s_port = -1;
++		return MA_FAILED_TO_OPEN_BACKEND_DEVICE;
++	}
++	s_grainFill = 0;
++	fprintf(stderr, "AUDIO: PS5 AudioOut port %d, 48 kHz stereo, %u-frame grains\n", (int)s_port, (unsigned)kGrainFrames);
++	return MA_SUCCESS;
++}
++
++static ma_result onDeviceUninit(ma_device *device)
++{
++	(void)device;
++	if (s_port >= 0) {
++		sceAudioOutOutput(s_port, nullptr); // drain the grain still queued
++		sceAudioOutClose(s_port);
++		s_port = -1;
++	}
++	return MA_SUCCESS;
++}
++
++static ma_result onDeviceStart(ma_device *device)
++{
++	(void)device;
++	return MA_SUCCESS;
++}
++
++static ma_result onDeviceStop(ma_device *device)
++{
++	(void)device;
++	return MA_SUCCESS;
++}
++
++static ma_result onDeviceWrite(ma_device *device, const void *frames, ma_uint32 frameCount, ma_uint32 *framesWritten)
++{
++	(void)device;
++	const int16_t *in = static_cast<const int16_t *>(frames);
++	ma_uint32 remaining = frameCount;
++	while (remaining > 0) {
++		const ma_uint32 take = (kGrainFrames - s_grainFill) < remaining ? (kGrainFrames - s_grainFill) : remaining;
++		memcpy(&s_grain[s_grainFill * kChannels], in, take * kChannels * sizeof(int16_t));
++		s_grainFill += take;
++		in += take * kChannels;
++		remaining -= take;
++		if (s_grainFill == kGrainFrames) {
++			if (sceAudioOutOutput(s_port, s_grain) < 0) {
++				return MA_IO_ERROR;
++			}
++			s_grainFill = 0;
++		}
++	}
++	if (framesWritten != nullptr) {
++		*framesWritten = frameCount;
++	}
++	return MA_SUCCESS;
++}
++
++static ma_result onContextUninit(ma_context *context)
++{
++	(void)context;
++	return MA_SUCCESS;
++}
++
++static ma_result onContextInit(ma_context *context, const ma_context_config *config, ma_backend_callbacks *callbacks)
++{
++	(void)context;
++	(void)config;
++	const int init = sceAudioOutInit();
++	if (init < 0 && init != kAlreadyInitialized) {
++		fprintf(stderr, "AUDIO: sceAudioOutInit failed: 0x%08x\n", (unsigned)init);
++		return MA_NO_BACKEND;
++	}
++	callbacks->onContextInit = onContextInit;
++	callbacks->onContextUninit = onContextUninit;
++	callbacks->onContextEnumerateDevices = onContextEnumerateDevices;
++	callbacks->onContextGetDeviceInfo = onContextGetDeviceInfo;
++	callbacks->onDeviceInit = onDeviceInit;
++	callbacks->onDeviceUninit = onDeviceUninit;
++	callbacks->onDeviceStart = onDeviceStart;
++	callbacks->onDeviceStop = onDeviceStop;
++	callbacks->onDeviceRead = nullptr;
++	callbacks->onDeviceWrite = onDeviceWrite;
++	callbacks->onDeviceDataLoop = nullptr; // MiniAudio's own thread drives onDeviceWrite
++	callbacks->onDeviceDataLoopWakeup = nullptr;
++	return MA_SUCCESS;
++}
++
++// Point a context config at this backend; init the context with the backend list it returns.
++static const ma_backend *configureContext(ma_context_config *config, ma_uint32 *backendCount)
++{
++	static const ma_backend backends[] = { ma_backend_custom };
++	config->custom.onContextInit = onContextInit;
++	*backendCount = 1;
++	return backends;
++}
++
++} // namespace MiniAudioPS5
++
++#endif // SAGE_PLATFORM_PS5
+diff --git a/Core/GameEngineDevice/Source/MiniAudioDevice/MiniAudioManager.cpp b/Core/GameEngineDevice/Source/MiniAudioDevice/MiniAudioManager.cpp
+index b346ca104..235848543 100644
+--- a/Core/GameEngineDevice/Source/MiniAudioDevice/MiniAudioManager.cpp
++++ b/Core/GameEngineDevice/Source/MiniAudioDevice/MiniAudioManager.cpp
+@@ -38,6 +38,8 @@
+ #define MINIAUDIO_IMPLEMENTATION
+ #include "MiniAudioDevice/MiniAudioManager.h"
+ #include "MiniAudioDevice/MiniAudioStream.h"
++// GeneralsX @feature PS5 13/10/2026 Playback on the console's AudioOut (a MiniAudio custom backend)
++#include "MiniAudioDevice/MiniAudioPS5Backend.h"
+ 
+ #include "Common/AudioAffect.h"
+ #include "Common/AudioHandleSpecialValues.h"
+@@ -63,11 +65,15 @@
+ #include "GameLogic/FPUControl.h"
+ 
+ #include "Common/file.h"
++// GeneralsX @build PS5 13/10/2026 The PS5's FFmpeg has only the Bink decoders (scripts/build-ffmpeg.sh):
++// MiniAudio decodes the game's WAV and MP3 files itself
++#if !defined(SAGE_PLATFORM_PS5)
+ #include "VideoDevice/FFmpeg/FFmpegFile.h"
+ 
+ extern "C" {
+ #include <libavcodec/avcodec.h>
+ }
++#endif
+ 
+ #ifdef _INTERNAL
+ //#pragma optimize("", off)
+@@ -358,6 +364,43 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
+ 		return;
+ 	}
+ 
++	// Decode all audio frames into a buffer
++	std::vector<uint8_t> pcmData;
++	int sampleRate = 0;
++	int channels = 0;
++	int bytesPerSample = 0;
++
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @build PS5 13/10/2026 Decode with MiniAudio's WAV/MP3 decoders from an in-memory copy
++	// of the file. Reading from memory keeps the decoders off the VFS path that hangs on MP3.
++	const Int fileSize = file->size();
++	char *fileData = file->readEntireAndClose();
++	file = NULL;
++	if (fileData == NULL || fileSize <= 0) {
++		DEBUG_LOG(("MiniAudio: Failed to read file: %s\n", fileToPlay.str()));
++		delete[] fileData;
++		releasePlayingAudio(audio);
++		return;
++	}
++
++	ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_s16, 0, 0);
++	ma_decoder decoder;
++	if (ma_decoder_init_memory(fileData, (size_t)fileSize, &decoderConfig, &decoder) == MA_SUCCESS) {
++		sampleRate = (int)decoder.outputSampleRate;
++		channels = (int)decoder.outputChannels;
++		bytesPerSample = 2;
++
++		const size_t bytesPerFrame = (size_t)channels * bytesPerSample;
++		ma_uint8 chunk[4096 * 2 * 2];
++		const ma_uint64 chunkFrames = sizeof(chunk) / bytesPerFrame;
++		ma_uint64 framesRead = 0;
++		while (ma_decoder_read_pcm_frames(&decoder, chunk, chunkFrames, &framesRead) == MA_SUCCESS && framesRead > 0) {
++			pcmData.insert(pcmData.end(), chunk, chunk + framesRead * bytesPerFrame);
++		}
++		ma_decoder_uninit(&decoder);
++	}
++	delete[] fileData;
++#else
+ 	FFmpegFile *ffmpegFile = NEW FFmpegFile();
+ 	if (!ffmpegFile->open(file)) {
+ 		DEBUG_LOG(("MiniAudio: Failed to open FFmpeg file: %s\n", fileToPlay.str()));
+@@ -366,12 +409,6 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
+ 		return;
+ 	}
+ 
+-	// Decode all audio frames into a buffer
+-	std::vector<uint8_t> pcmData;
+-	int sampleRate = 0;
+-	int channels = 0;
+-	int bytesPerSample = 0;
+-
+ 	auto onFrame = [&](AVFrame *frame, int stream_idx, int stream_type, void *user_data) {
+ 		if (stream_type != AVMEDIA_TYPE_AUDIO) return;
+ 
+@@ -404,6 +441,7 @@ void MiniAudioManager::playAudioEvent(AudioRequest *req)
+ 	// Always delete ffmpegFile after decoding is complete
+ 	delete ffmpegFile;
+ 	ffmpegFile = NULL;
++#endif
+ 
+ 	if (pcmData.empty() || sampleRate == 0 || bytesPerSample == 0) {
+ 		DEBUG_LOG(("MiniAudio: No audio data decoded from: %s\n", fileToPlay.str()));
+@@ -817,7 +855,14 @@ void MiniAudioManager::openDevice(void)
+ 	contextConfig = ma_context_config_init();
+ 	contextConfig.pLog = &m_log;
+ 
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @feature PS5 13/10/2026 The console's AudioOut through a custom backend
++	ma_uint32 backendCount = 0;
++	const ma_backend *backends = MiniAudioPS5::configureContext(&contextConfig, &backendCount);
++	result = ma_context_init(backends, backendCount, &contextConfig, &m_context);
++#else
+ 	result = ma_context_init(NULL, 0, &contextConfig, &m_context);
++#endif
+ 	if (result != MA_SUCCESS) {
+ 		DEBUG_LOG(("MiniAudio: Failed to initialize context: %d\n", result));
+ 		setOn(false, AudioAffect_All);
+@@ -834,6 +879,10 @@ void MiniAudioManager::openDevice(void)
+ 
+ 	engineConfig = ma_engine_config_init();
+ 	engineConfig.pResourceManager = &m_resourceManager;
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @feature PS5 13/10/2026 The engine's device must come from the custom-backend context
++	engineConfig.pContext = &m_context;
++#endif
+ 
+ 	result = ma_engine_init(&engineConfig, &m_engine);
+ 	if (result != MA_SUCCESS) {
+diff --git a/Core/GameEngineDevice/Source/StdDevice/Common/StdLocalFileSystem.cpp b/Core/GameEngineDevice/Source/StdDevice/Common/StdLocalFileSystem.cpp
+index e3e948991..0ad6b87a8 100644
+--- a/Core/GameEngineDevice/Source/StdDevice/Common/StdLocalFileSystem.cpp
++++ b/Core/GameEngineDevice/Source/StdDevice/Common/StdLocalFileSystem.cpp
+@@ -82,7 +82,8 @@ static std::filesystem::path fixFilenameFromWindowsPath(const Char *filename, In
+ 				return assetRootPath;
+ 			}
+ 
+-			#ifdef __linux__
++			// GeneralsX @build PS5 13/10/2026 The PS5's UFS (FreeBSD) is case-sensitive too
++			#if defined(__linux__) || defined(__FreeBSD__)
+ 			// GeneralsX @bugfix BenderAI 11/05/2026 Linux: resolve case-insensitive paths from asset root.
+ 			// Some cursor files are lowercase on disk (e.g. sccpointer.ani) while INI references mixed-case names.
+ 			// The existing case-insensitive traversal below only checks cwd, not the asset root fallback.
+diff --git a/Core/Libraries/Include/D3D8Stub.h b/Core/Libraries/Include/D3D8Stub.h
+index fe7ffedaf..7f5c41ec5 100644
+--- a/Core/Libraries/Include/D3D8Stub.h
++++ b/Core/Libraries/Include/D3D8Stub.h
+@@ -80,7 +80,8 @@ typedef unsigned int D3DBLEND;
+ 
+ // TheSuperHackers @build 09/02/2026 Windows string functions stubs for Linux
+ // lstrcpyn and lstrcat are Windows-only, map to standard C functions
+-#ifdef __linux__
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) too
++#if defined(__linux__) || defined(__FreeBSD__)
+ #define lstrcpyn(dst, src, len) strncpy(dst, src, len-1); dst[len-1] = '\0'
+ #define lstrcat(dst, src) strcat(dst, src)
+ #endif
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt b/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
+index 44fc313e7..5051b5acc 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
++++ b/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
+@@ -252,6 +252,8 @@ target_sources(corei_ww3d2 INTERFACE ${WW3D2_SRC})
+ # GeneralsX @build fbraz 11/02/2026 BenderAI - Enable FreeType text rendering on Linux/macOS
+ target_compile_definitions(corei_ww3d2 INTERFACE
+     $<$<PLATFORM_ID:Linux,Darwin>:SAGE_USE_FREETYPE>
++    # GeneralsX @build PS5 13/10/2026 The PS5 (FreeBSD to CMake) renders text with FreeType too
++    $<$<BOOL:${PS5}>:SAGE_USE_FREETYPE>
+ )
+ 
+ target_include_directories(corei_ww3d2 INTERFACE
+@@ -267,10 +269,13 @@ endif()
+ # GeneralsX @build fbraz 11/02/2026 BenderAI - FreeType2 for Unix text rendering (Linux + macOS Phase 5)
+ if(UNIX)
+     find_package(Freetype REQUIRED)
++    # GeneralsX @build PS5 13/10/2026 No fontconfig on the PS5: fonts ship with the title
++    if(NOT PS5)
+     # GeneralsX @build felipebraz 20/06/2025 fontconfig needed on macOS too (render2dsentence.cpp uses Locate_Font_FontConfig)
+     find_package(Fontconfig REQUIRED)
+     # GeneralsX @build felipebraz 24/02/2026 fontconfig static lib (vcpkg) links iconv; must be explicit on macOS
+     find_package(Iconv REQUIRED)
++    endif()
+ endif()
+ 
+ target_link_libraries(corei_ww3d2 INTERFACE
+@@ -280,6 +285,7 @@ target_link_libraries(corei_ww3d2 INTERFACE
+     corei_platform
+     $<$<PLATFORM_ID:Linux>:Freetype::Freetype>
+     $<$<PLATFORM_ID:Darwin>:Freetype::Freetype>
++    $<$<BOOL:${PS5}>:Freetype::Freetype>
+     $<$<PLATFORM_ID:Linux>:Fontconfig::Fontconfig>
+     $<$<PLATFORM_ID:Darwin>:Fontconfig::Fontconfig>
+     $<$<PLATFORM_ID:Darwin>:Iconv::Iconv>
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp b/Core/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp
+index 8eb4b13e4..c27f8be1d 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp
++++ b/Core/Libraries/Source/WWVegas/WW3D2/dx8wrapper.cpp
+@@ -636,6 +636,10 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
+ 		// GeneralsX @build BenderAI 10/02/2026 - Platform-specific DLL/SO/DYLIB loading (Phase 5: macOS)
+ #ifdef _WIN32
+ 		D3D8Lib = LoadLibrary("D3D8.DLL");
++#elif defined(SAGE_PLATFORM_PS5)
++		// GeneralsX @build PS5 13/10/2026 A PS5 title cannot load libraries: DXVK's D3D8 is linked in.
++		fprintf(stderr, "DEBUG: DX8Wrapper::Init() - Using linked DXVK D3D8 (PS5)\n");
++		D3D8Lib = reinterpret_cast<HMODULE>(&Direct3DCreate8);
+ #elif defined(__APPLE__)
+ 		fprintf(stderr, "DEBUG: DX8Wrapper::Init() - Loading libdxvk_d3d8.dylib (macOS)...\n");
+ 		D3D8Lib = LoadLibrary("libdxvk_d3d8.dylib");
+@@ -660,7 +664,11 @@ bool DX8Wrapper::Init(void * hwnd, bool lite)
+ 		}
+ 
+ 		fprintf(stderr, "DEBUG: DX8Wrapper::Init() - Getting Direct3DCreate8 function pointer...\n");
++#if defined(SAGE_PLATFORM_PS5)
++		Direct3DCreate8Ptr = &Direct3DCreate8;
++#else
+ 		Direct3DCreate8Ptr = (Direct3DCreate8Type) GetProcAddress(D3D8Lib, "Direct3DCreate8");
++#endif
+ 		if (Direct3DCreate8Ptr == nullptr) {
+ 			fprintf(stderr, "ERROR: DX8Wrapper::Init() - Failed to get Direct3DCreate8 function\n");
+ 			return false;
+@@ -725,7 +733,10 @@ void DX8Wrapper::Shutdown()
+ 	}
+ 
+ 	if (D3D8Lib) {
++#if !defined(SAGE_PLATFORM_PS5)
++		// GeneralsX @build PS5 13/10/2026 On the PS5 the handle only marks the linked D3D8 as in use
+ 		FreeLibrary(D3D8Lib);
++#endif
+ 		D3D8Lib = nullptr;
+ 	}
+ 
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.cpp b/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.cpp
+index a08588375..21c7f2b56 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.cpp
++++ b/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.cpp
+@@ -1862,7 +1862,22 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
+ 	                     strcmp( normalized, "fabrands" ) == 0 ||
+ 	                     strcmp( normalized, "fabrands.ttf" ) == 0);
+ 
+-	if ( is_arial ) {
++	// GeneralsX @build PS5 13/10/2026 The console has no fontconfig to substitute the other Windows
++	// fonts the game names; map them to the bundled Liberation faces as fontconfig would on Linux.
++#if defined(SAGE_PLATFORM_PS5)
++	const bool is_narrow = (strcmp( normalized, "placardmtcondensed" ) == 0 ||
++							strcmp( normalized, "placardmtcondensedbold" ) == 0);
++	is_arial = is_arial || strcmp( normalized, "tahoma" ) == 0 || strcmp( normalized, "tahomabold" ) == 0;
++	is_courier = is_courier || strcmp( normalized, "fixedsys" ) == 0;
++#else
++	const bool is_narrow = false;
++#endif
++
++	if ( is_narrow ) {
++		// Placard MT Condensed is a bold display face.
++		candidates[candidate_count++] = "LiberationSansNarrow-Bold";
++		candidates[candidate_count++] = "LiberationSansNarrow-Regular";
++	} else if ( is_arial ) {
+ 		if ( is_bold ) {
+ 			candidates[candidate_count++] = "LiberationSans-Bold";
+ 			candidates[candidate_count++] = "liberationsans-bold";
+@@ -1906,8 +1921,9 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
+ 
+ 	//
+ 	// Tier 2: System Fontconfig match (desktop Linux/macOS)
++	// GeneralsX @build PS5 13/10/2026 Not on the PS5: Tier 1 finds the fonts in /app0/fonts
+ 	//
+-#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
++#if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && !defined(SAGE_PLATFORM_PS5)
+ 	FcConfig *config = FcInitLoadConfigAndFonts();
+ 	if ( config != nullptr ) {
+ 		FcPattern *pattern = FcNameParse( (const FcChar8*)font_name );
+@@ -1957,7 +1973,7 @@ FontCharsClass::Locate_Font_FontConfig (const char *font_name)
+ 	// Tier 3: Universal fallback to bundled Arial/Liberation font for recognized core UI fonts
+ 	// GeneralsX @bugfix felipebraz 26/09/2026 Guard Tier 3 so unresolved Unicode/CJK fonts return nullptr and allow caller fallback delegation
+ 	//
+-	if ( is_arial || is_times || is_courier ) {
++	if ( is_arial || is_times || is_courier || is_narrow ) {
+ 		static const char *fallback_names_bold[] = {
+ 			"arialbold.ttf",
+ 			"arial.ttf",
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.h b/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.h
+index c588d9a04..1a7299a48 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.h
++++ b/Core/Libraries/Source/WWVegas/WW3D2/render2dsentence.h
+@@ -51,7 +51,8 @@
+     #if defined(__APPLE__)
+         #include <TargetConditionals.h>
+     #endif
+-    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
++    // GeneralsX @build PS5 13/10/2026 No fontconfig on the PS5 either: fonts ship with the title
++    #if !(defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE) && !defined(SAGE_PLATFORM_PS5)
+         #include <fontconfig/fontconfig.h>
+     #endif
+ #endif
+diff --git a/Core/Libraries/Source/WWVegas/WWLib/FastAllocator.h b/Core/Libraries/Source/WWVegas/WWLib/FastAllocator.h
+index db6b5b43f..1f0cf220a 100644
+--- a/Core/Libraries/Source/WWVegas/WWLib/FastAllocator.h
++++ b/Core/Libraries/Source/WWVegas/WWLib/FastAllocator.h
+@@ -42,7 +42,8 @@
+ 
+ // GeneralsX @bugfix BenderAI 24/02/2026 Phase 5 - macOS malloc.h compatibility
+ // malloc.h exists on Windows AND Linux natively; macOS is the only exception
+-#ifdef __APPLE__
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) has no usable <malloc.h> either
++#if defined(__APPLE__) || defined(__FreeBSD__)
+ #include <stdlib.h>  // macOS: malloc functions are in stdlib.h
+ #else
+ #include <malloc.h>  // Windows/Linux: native malloc.h
+diff --git a/Core/Libraries/Source/WWVegas/WWLib/TARGA.cpp b/Core/Libraries/Source/WWVegas/WWLib/TARGA.cpp
+index 23ecc4f2d..5efee4145 100644
+--- a/Core/Libraries/Source/WWVegas/WWLib/TARGA.cpp
++++ b/Core/Libraries/Source/WWVegas/WWLib/TARGA.cpp
+@@ -65,7 +65,8 @@
+ #include "WWDebug/wwdebug.h"
+ #endif
+ // GeneralsX @bugfix BenderAI 24/02/2026 Phase 5 - malloc.h not on macOS
+-#ifdef __APPLE__
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) has no usable <malloc.h> either
++#if defined(__APPLE__) || defined(__FreeBSD__)
+ #include <stdlib.h>
+ #else
+ #include <malloc.h>
+diff --git a/Core/Libraries/Source/WWVegas/WWLib/bittype.h b/Core/Libraries/Source/WWVegas/WWLib/bittype.h
+index a237ae93d..bec3be510 100644
+--- a/Core/Libraries/Source/WWVegas/WWLib/bittype.h
++++ b/Core/Libraries/Source/WWVegas/WWLib/bittype.h
+@@ -68,7 +68,8 @@ typedef double				float64;
+ 
+ // TheSuperHackers @build 09/02/2025 Bender
+ // Win32 types: use uint32_t on Linux 64-bit to match DXVK, unsigned long on Windows 32-bit
+-#if defined(__linux__) || defined(__APPLE__)
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) is 64-bit Unix too
++#if defined(__linux__) || defined(__APPLE__) || defined(__FreeBSD__)
+     // Linux/macOS: long is 64-bit on x86_64, use uint32_t to match Win32 behavior
+     typedef uint32_t DWORD;
+     typedef uint32_t ULONG;
+diff --git a/Core/Libraries/Source/WWVegas/WWLib/ini.cpp b/Core/Libraries/Source/WWVegas/WWLib/ini.cpp
+index 6d98487f2..6dac3cad8 100644
+--- a/Core/Libraries/Source/WWVegas/WWLib/ini.cpp
++++ b/Core/Libraries/Source/WWVegas/WWLib/ini.cpp
+@@ -97,7 +97,8 @@
+ 
+ // GeneralsX @bugfix BenderAI 24/02/2026 Phase 5 - macOS compat: malloc.h not available on Apple
+ // Linux has malloc.h natively; only macOS needs stdlib.h as a replacement
+-#ifdef __APPLE__
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) has no usable <malloc.h> either
++#if defined(__APPLE__) || defined(__FreeBSD__)
+ #include <stdlib.h>
+ #else
+ #include <malloc.h>
+diff --git a/Core/Libraries/Source/WWVegas/WWLib/osdep.h b/Core/Libraries/Source/WWVegas/WWLib/osdep.h
+index 6a9e23e0d..78ca7990a 100644
+--- a/Core/Libraries/Source/WWVegas/WWLib/osdep.h
++++ b/Core/Libraries/Source/WWVegas/WWLib/osdep.h
+@@ -2,7 +2,12 @@
+ #define OSDEP_H
+ 
+ #ifdef _UNIX
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) declares alloca in <stdlib.h> and has no <alloca.h>
++#if defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <alloca.h>
++#endif
+ #define _alloca alloca
+ #include <ctype.h>
+ #include <cstring>
+diff --git a/Dependencies/Miles/mss/mss.h b/Dependencies/Miles/mss/mss.h
+index 1203a40e9..0c366a56a 100644
+--- a/Dependencies/Miles/mss/mss.h
++++ b/Dependencies/Miles/mss/mss.h
+@@ -60,7 +60,8 @@ typedef HWAVEOUT *LPHWAVEOUT;
+ 
+ #if !defined _MSC_VER
+ #if !defined(__stdcall)
+-#if defined __has_attribute && __has_attribute(stdcall)
++// GeneralsX @build PS5 13/10/2026 The PS5 target refuses stdcall on x86-64 (desktop clang only warns)
++#if defined __has_attribute && __has_attribute(stdcall) && !defined(__PROSPERO__)
+ #define __stdcall __attribute__((stdcall))
+ #else
+ #define __stdcall
+diff --git a/Dependencies/Utility/Utility/endian_compat.h b/Dependencies/Utility/Utility/endian_compat.h
+index bda50e37c..6c5b39968 100644
+--- a/Dependencies/Utility/Utility/endian_compat.h
++++ b/Dependencies/Utility/Utility/endian_compat.h
+@@ -25,6 +25,10 @@
+ #if defined(__linux__) || defined(__CYGWIN__)
+ #include <endian.h>
+ 
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) has the same macros in <sys/endian.h>
++#elif defined(__FreeBSD__)
++#include <sys/endian.h>
++
+ #elif defined(__APPLE__)
+ #include <libkern/OSByteOrder.h>
+ 
+@@ -113,7 +117,7 @@
+ 
+ 
+ // Endian helper function data types
+-#if defined(__linux__) || defined(__CYGWIN__)
++#if defined(__linux__) || defined(__CYGWIN__) || defined(__FreeBSD__)
+ typedef uint16_t SwapType16;
+ typedef uint32_t SwapType32;
+ typedef uint64_t SwapType64;
+diff --git a/Dependencies/Utility/Utility/mem_compat.h b/Dependencies/Utility/Utility/mem_compat.h
+index 42a5e8f0b..bb13472a1 100644
+--- a/Dependencies/Utility/Utility/mem_compat.h
++++ b/Dependencies/Utility/Utility/mem_compat.h
+@@ -19,6 +19,11 @@
+ // Thhis file contains the _alloca macro for alloca, which is used in the codebase.
+ #pragma once
+ 
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) declares alloca in <stdlib.h> and has no <alloca.h>
++#if defined(__FreeBSD__)
++#include <stdlib.h>
++#else
+ #include <alloca.h>
++#endif
+ #define _alloca alloca
+ 
+diff --git a/Generals/Code/CompatLib/Include/memory_compat.h b/Generals/Code/CompatLib/Include/memory_compat.h
+index af8971ba9..f6386eba3 100644
+--- a/Generals/Code/CompatLib/Include/memory_compat.h
++++ b/Generals/Code/CompatLib/Include/memory_compat.h
+@@ -7,6 +7,9 @@
+ #include <malloc.h>
+ #elif __APPLE__
+ #include <malloc/malloc.h>
++#elif defined(__FreeBSD__)
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) declares malloc_usable_size here
++#include <malloc_np.h>
+ #endif
+ 
+ #define GMEM_FIXED 0
+@@ -23,7 +26,7 @@ static void GlobalFree(void *ptr)
+ 
+ static size_t GlobalSize(void *ptr)
+ {
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   return malloc_usable_size(ptr);
+ #elif defined(__APPLE__)
+   return malloc_size(ptr);
+diff --git a/Generals/Code/GameEngine/Source/Common/GlobalData.cpp b/Generals/Code/GameEngine/Source/Common/GlobalData.cpp
+index 9bb47ccac..03e1e8b91 100644
+--- a/Generals/Code/GameEngine/Source/Common/GlobalData.cpp
++++ b/Generals/Code/GameEngine/Source/Common/GlobalData.cpp
+@@ -652,8 +652,14 @@ GlobalData::GlobalData()
+ 	// GeneralsX @feature BenderAI 21/04/2026 Default to TRUE; user can override via Options.ini
+ 	m_checkForUpdates = TRUE;
+ 	m_windowed = 0;
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @tweak PS5 13/10/2026 Start at 1080p on the console's 16:9 output; Options.ini still overrides.
++	m_xResolution = 1920;
++	m_yResolution = 1080;
++#else
+ 	m_xResolution = DEFAULT_DISPLAY_WIDTH;
+ 	m_yResolution = DEFAULT_DISPLAY_HEIGHT;
++#endif
+ 	m_maxShellScreens = 0;
+ 	m_useCloudMap = FALSE;
+ 	m_use3WayTerrainBlends = 1;
+diff --git a/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/OptionsMenu.cpp b/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/OptionsMenu.cpp
+index b7405e8ba..84cf5da55 100644
+--- a/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/OptionsMenu.cpp
++++ b/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/OptionsMenu.cpp
+@@ -251,7 +251,10 @@ static void setDefaults()
+ 
+ 	//-------------------------------------------------------------------------------------------------
+ 	// Mouse Mode
+-	GadgetCheckBoxSetChecked(checkAlternateMouse, FALSE);
++	// GeneralsX @bugfix PS5 14/10/2026 The retail 1.00 OptionsMenu.wnd has no CheckAlternateMouse
++	// (a later patch added it), and the gadget functions do not take a null window.
++	if (checkAlternateMouse)
++		GadgetCheckBoxSetChecked(checkAlternateMouse, FALSE);
+ 
+ 	//-------------------------------------------------------------------------------------------------
+ //	// scroll speed val
+@@ -545,8 +548,12 @@ static void saveOptions()
+ 
+ 	//-------------------------------------------------------------------------------------------------
+ 	// mouse mode
+-	TheWritableGlobalData->m_useAlternateMouse = GadgetCheckBoxIsChecked(checkAlternateMouse);
+-	(*pref)["UseAlternateMouse"] = TheWritableGlobalData->m_useAlternateMouse ? "yes" : "no";
++	// GeneralsX @bugfix PS5 14/10/2026 Without the retail 1.00 layout's checkbox the setting stays as it is
++	if (checkAlternateMouse)
++	{
++		TheWritableGlobalData->m_useAlternateMouse = GadgetCheckBoxIsChecked(checkAlternateMouse);
++		(*pref)["UseAlternateMouse"] = TheWritableGlobalData->m_useAlternateMouse ? "yes" : "no";
++	}
+ 
+ 	// TheSuperHackers @todo Add check box ?
+ 	{
+@@ -1325,7 +1332,9 @@ void OptionsMenuInit( WindowLayout *layout, void *userData )
+ //	GadgetCheckBoxSetChecked(checkAudioSurround, TheAudio->getSpeakerSurround());
+ 
+  	// set the mouse mode
+- 	GadgetCheckBoxSetChecked(checkAlternateMouse, TheGlobalData->m_useAlternateMouse);
++ 	// GeneralsX @bugfix PS5 14/10/2026 Absent from the retail 1.00 layout
++ 	if (checkAlternateMouse)
++ 		GadgetCheckBoxSetChecked(checkAlternateMouse, TheGlobalData->m_useAlternateMouse);
+ 
+ 	// set scroll speed slider
+ 	// TheSuperHackers @tweak xezon 11/07/2025 No longer sets the slider position if the user setting
+diff --git a/Generals/Code/GameEngineDevice/CMakeLists.txt b/Generals/Code/GameEngineDevice/CMakeLists.txt
+index 0700d7e9f..0f2a2b22d 100644
+--- a/Generals/Code/GameEngineDevice/CMakeLists.txt
++++ b/Generals/Code/GameEngineDevice/CMakeLists.txt
+@@ -192,6 +192,9 @@ else()
+         Include/SDL3Device/GameClient/SDL3Mouse.h
+         Source/SDL3Device/GameClient/SDL3Keyboard.cpp
+         Include/SDL3Device/GameClient/SDL3Keyboard.h
++        # GeneralsX @feature PS5 13/10/2026 Gamepad as mouse and keyboard
++        Source/SDL3Device/GameClient/SDL3Gamepad.cpp
++        Include/SDL3Device/GameClient/SDL3Gamepad.h
+     )
+ 
+     # GeneralsX @refactor fbraz3 31/03/2026 OpenALAudioDevice sources now in Core/GameEngineDevice
+diff --git a/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Gamepad.h b/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Gamepad.h
+new file mode 100644
+index 000000000..bc98608b5
+--- /dev/null
++++ b/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Gamepad.h
+@@ -0,0 +1,80 @@
++/*
++**	Command & Conquer Generals(tm)
++**	Copyright 2025 Electronic Arts Inc.
++**
++**	This program is free software: you can redistribute it and/or modify
++**	it under the terms of the GNU General Public License as published by
++**	the Free Software Foundation, either version 3 of the License, or
++**	(at your option) any later version.
++**
++**	This program is distributed in the hope that it will be useful,
++**	but WITHOUT ANY WARRANTY; without even the implied warranty of
++**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++**	GNU General Public License for more details.
++**
++**	You should have received a copy of the GNU General Public License
++**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++/*
++** SDL3Gamepad.h
++**
++** GeneralsX @feature PS5 13/10/2026 Play with a gamepad (the PS5's DualSense).
++**
++** The game is driven by mouse and keyboard. A gamepad stands in for both: each update reads the
++** first connected gamepad and pushes the mouse and keyboard events it means into SDL's queue,
++** where SDL3GameEngine hands them to SDL3Mouse and SDL3Keyboard like any others. A USB mouse and
++** keyboard keep working beside it.
++**
++**   left stick      cursor              right stick   scroll the map (LookAtTranslator)
++**   cross / circle  left / right click  L1 / R1 held  Shift / Ctrl
++**   L2 / R2         zoom out / in       D-pad         control groups 1-4 (with R1: assign)
++**   triangle        select matching (E) square        stop (S)
++**   L3              command centre (H)  R3            reset camera (keypad 5)
++**   touch pad       last radar event    options       menu (Esc)
++*/
++
++#pragma once
++
++#ifndef _WIN32
++
++#include <SDL3/SDL.h>
++
++class SDL3Gamepad
++{
++public:
++	SDL3Gamepad();
++	~SDL3Gamepad();
++
++	/// Read the gamepad and push the mouse and keyboard events it stands for. Call once per frame,
++	/// before the event queue is drained.
++	void update(SDL_Window *window);
++
++private:
++	void open(void);
++	void close(void);
++	void releaseAll(SDL_Window *window);
++	void moveCursor(SDL_Window *window, float dt);
++	void scroll(void);
++	void pushMouseButton(SDL_Window *window, Uint8 button, bool down);
++	void pushKey(SDL_Window *window, SDL_Scancode scancode, bool down);
++	void setKey(SDL_Window *window, SDL_Scancode scancode, bool down);
++
++	SDL_Gamepad *m_pad;
++	bool m_subsystemReady;
++	Uint64 m_nextScanMs;
++	Uint64 m_lastTicksNs;
++	float m_cursorX;
++	float m_cursorY;
++	bool m_buttons[SDL_GAMEPAD_BUTTON_COUNT];
++	bool m_keys[SDL_SCANCODE_COUNT];
++
++	// What the log says: SDL's start, the joysticks it sees, the first input, and a periodic snapshot.
++	void trace(SDL_Window *window);
++	bool m_initFailureLogged;
++	int m_joysticksLogged;
++	bool m_inputSeen;
++	Uint64 m_traceAtMs;
++};
++
++#endif // !_WIN32
+diff --git a/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Mouse.h b/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Mouse.h
+index ad9c3b23a..7672d27f1 100644
+--- a/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Mouse.h
++++ b/Generals/Code/GameEngineDevice/Include/SDL3Device/GameClient/SDL3Mouse.h
+@@ -125,6 +125,15 @@ private:
+ 	void setCursorDirection(MouseCursor cursor);
+ 	MouseCursor m_lastSetCursor;
+ 	Int m_lastSetDirectionFrame;
++
++#ifdef SAGE_PLATFORM_PS5
++	// GeneralsX @feature PS5 13/10/2026 The console has no OS cursor: the game draws the selected
++	// cursor's .ani frames itself, as 2D images over the frame (drawConsoleCursor).
++	void drawConsoleCursor(void);
++	AnimatedCursor* m_consoleCursor = nullptr;        ///< cursor selected by setCursor()
++	UnsignedInt m_consoleEvents = 0;                  ///< mouse events received, for the log
++	Uint64 m_consoleTraceAt = 0;                      ///< when the cursor's state is next logged
++#endif
+ };
+ 
+ #endif // !_WIN32
+diff --git a/Generals/Code/GameEngineDevice/Include/SDL3GameEngine.h b/Generals/Code/GameEngineDevice/Include/SDL3GameEngine.h
+index 3f294baf1..d5fa78320 100644
+--- a/Generals/Code/GameEngineDevice/Include/SDL3GameEngine.h
++++ b/Generals/Code/GameEngineDevice/Include/SDL3GameEngine.h
+@@ -33,6 +33,7 @@
+ #include "Common/GameEngine.h"
+ #include "Common/LocalFileSystem.h"
+ #include "Common/ArchiveFileSystem.h"
++#include "SDL3Device/GameClient/SDL3Gamepad.h"
+ #include <SDL3/SDL.h>
+ 
+ // EXTERNALS
+@@ -108,6 +109,10 @@ protected:
+ 	Bool			m_IsActive;
+ 	Bool			m_IsTextInputActive;
+ 	GameWindow*	m_TextInputFocusWindow;
++	// GeneralsX @feature PS5 13/10/2026 A gamepad stands in for mouse and keyboard: always on the PS5,
++	// elsewhere when GENERALSX_GAMEPAD is set.
++	SDL3Gamepad	m_Gamepad;
++	Bool			m_IsGamepadEnabled;
+ 
+ 	// Event processing
+ 	void pollSDL3Events(void);
+diff --git a/Generals/Code/GameEngineDevice/Include/W3DDevice/GameClient/W3DGameClient.h b/Generals/Code/GameEngineDevice/Include/W3DDevice/GameClient/W3DGameClient.h
+index caff5008d..3eff20759 100644
+--- a/Generals/Code/GameEngineDevice/Include/W3DDevice/GameClient/W3DGameClient.h
++++ b/Generals/Code/GameEngineDevice/Include/W3DDevice/GameClient/W3DGameClient.h
+@@ -64,6 +64,16 @@
+ 
+ class ThingTemplate;
+ 
++#if !defined(RTS_HAS_FFMPEG) && defined(SAGE_PLATFORM_PS5)
++// GeneralsX @build PS5 13/10/2026 No Bink and no FFmpeg yet on the PS5: the common player opens no
++// streams, so the game skips its videos, and it has no audio output whose volume to set.
++class W3DNoVideoPlayer : public VideoPlayer
++{
++public:
++	virtual void setVolume( Real volume ) override { }
++};
++#endif
++
+ extern Win32Mouse *TheWin32Mouse;
+ 
+ ///////////////////////////////////////////////////////////////////////////////
+@@ -120,6 +130,8 @@ protected:
+ 
+ #ifdef RTS_HAS_FFMPEG
+ 	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW FFmpegVideoPlayer; }
++#elif defined(SAGE_PLATFORM_PS5)
++	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW W3DNoVideoPlayer; }
+ #else
+ 	virtual VideoPlayerInterface *createVideoPlayer() override { return NEW BinkVideoPlayer; }
+ #endif
+diff --git a/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Gamepad.cpp b/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Gamepad.cpp
+new file mode 100644
+index 000000000..831851f2d
+--- /dev/null
++++ b/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Gamepad.cpp
+@@ -0,0 +1,347 @@
++/*
++**	Command & Conquer Generals(tm)
++**	Copyright 2025 Electronic Arts Inc.
++**
++**	This program is free software: you can redistribute it and/or modify
++**	it under the terms of the GNU General Public License as published by
++**	the Free Software Foundation, either version 3 of the License, or
++**	(at your option) any later version.
++**
++**	This program is distributed in the hope that it will be useful,
++**	but WITHOUT ANY WARRANTY; without even the implied warranty of
++**	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++**	GNU General Public License for more details.
++**
++**	You should have received a copy of the GNU General Public License
++**	along with this program.  If not, see <http://www.gnu.org/licenses/>.
++*/
++
++/*
++** SDL3Gamepad.cpp
++**
++** GeneralsX @feature PS5 13/10/2026 A gamepad stands in for mouse and keyboard (see SDL3Gamepad.h).
++*/
++
++#ifndef _WIN32
++
++#include "SDL3Device/GameClient/SDL3Gamepad.h"
++
++#include "GameClient/LookAtXlat.h"
++
++#include <cmath>
++#include <cstdio>
++#include <cstring>
++
++namespace {
++
++const float kStickDeadZone = 0.15f;
++const float kCursorScreensPerSecond = 1.1f; // full deflection: about one screen height a second
++const float kTriggerThreshold = 0.35f;
++const Uint64 kScanIntervalMs = 1000;
++
++// Buttons that press one key while held.
++struct ButtonKey
++{
++	SDL_GamepadButton button;
++	SDL_Scancode scancode;
++};
++
++const ButtonKey kButtonKeys[] = {
++	{ SDL_GAMEPAD_BUTTON_LEFT_SHOULDER, SDL_SCANCODE_LSHIFT },
++	{ SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER, SDL_SCANCODE_LCTRL },
++	{ SDL_GAMEPAD_BUTTON_NORTH, SDL_SCANCODE_E },
++	{ SDL_GAMEPAD_BUTTON_WEST, SDL_SCANCODE_S },
++	{ SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_SCANCODE_1 },
++	{ SDL_GAMEPAD_BUTTON_DPAD_RIGHT, SDL_SCANCODE_2 },
++	{ SDL_GAMEPAD_BUTTON_DPAD_DOWN, SDL_SCANCODE_3 },
++	{ SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_SCANCODE_4 },
++	{ SDL_GAMEPAD_BUTTON_LEFT_STICK, SDL_SCANCODE_H },
++	{ SDL_GAMEPAD_BUTTON_RIGHT_STICK, SDL_SCANCODE_KP_5 },
++	{ SDL_GAMEPAD_BUTTON_TOUCHPAD, SDL_SCANCODE_SPACE },
++	{ SDL_GAMEPAD_BUTTON_START, SDL_SCANCODE_ESCAPE },
++};
++
++float axis(SDL_Gamepad *pad, SDL_GamepadAxis which)
++{
++	return SDL_GetGamepadAxis(pad, which) / 32767.0f;
++}
++
++} // namespace
++
++SDL3Gamepad::SDL3Gamepad()
++	: m_pad(nullptr),
++	  m_subsystemReady(false),
++	  m_nextScanMs(0),
++	  m_lastTicksNs(0),
++	  m_cursorX(0.0f),
++	  m_cursorY(0.0f),
++	  m_initFailureLogged(false),
++	  m_joysticksLogged(-1),
++	  m_inputSeen(false),
++	  m_traceAtMs(0)
++{
++	memset(m_buttons, 0, sizeof(m_buttons));
++	memset(m_keys, 0, sizeof(m_keys));
++}
++
++SDL3Gamepad::~SDL3Gamepad()
++{
++	close();
++}
++
++void SDL3Gamepad::open(void)
++{
++	int joysticks = 0;
++	SDL_free(SDL_GetJoysticks(&joysticks));
++	int count = 0;
++	SDL_JoystickID *ids = SDL_GetGamepads(&count);
++	if (joysticks != m_joysticksLogged)
++	{
++		fprintf(stderr, "INFO: Gamepad: SDL sees %d joystick(s), %d of them gamepads\n", joysticks, count);
++		m_joysticksLogged = joysticks;
++	}
++	if (ids != nullptr && count > 0)
++	{
++		m_pad = SDL_OpenGamepad(ids[0]);
++		if (m_pad != nullptr)
++		{
++			char *mapping = SDL_GetGamepadMapping(m_pad);
++			fprintf(stderr, "INFO: Gamepad: opened %s (%s)\n", SDL_GetGamepadName(m_pad), mapping ? mapping : "no mapping");
++			SDL_free(mapping);
++			SDL_SetGamepadLED(m_pad, 255, 150, 0);
++		}
++		else
++		{
++			fprintf(stderr, "WARNING: Gamepad: SDL_OpenGamepad failed: %s\n", SDL_GetError());
++		}
++	}
++	SDL_free(ids);
++}
++
++void SDL3Gamepad::trace(SDL_Window *window)
++{
++	const float lx = axis(m_pad, SDL_GAMEPAD_AXIS_LEFTX);
++	const float ly = axis(m_pad, SDL_GAMEPAD_AXIS_LEFTY);
++	const float rx = axis(m_pad, SDL_GAMEPAD_AXIS_RIGHTX);
++	const float ry = axis(m_pad, SDL_GAMEPAD_AXIS_RIGHTY);
++	Uint32 buttons = 0;
++	for (int button = 0; button < SDL_GAMEPAD_BUTTON_COUNT && button < 32; ++button)
++	{
++		buttons |= SDL_GetGamepadButton(m_pad, (SDL_GamepadButton)button) ? (1u << button) : 0u;
++	}
++	const bool input = buttons != 0 || SDL_fabsf(lx) > kStickDeadZone || SDL_fabsf(ly) > kStickDeadZone ||
++		SDL_fabsf(rx) > kStickDeadZone || SDL_fabsf(ry) > kStickDeadZone;
++	const Uint64 now = SDL_GetTicks();
++	if ((input && !m_inputSeen) || (now >= m_traceAtMs && now < 180000))
++	{
++		int width = 0;
++		int height = 0;
++		SDL_GetWindowSize(window, &width, &height);
++		fprintf(stderr, "INFO: Gamepad:%s sticks %+.2f %+.2f / %+.2f %+.2f, buttons %#x, cursor %.0f,%.0f in %dx%d, keyboard focus %s\n",
++			input && !m_inputSeen ? " first input," : "", lx, ly, rx, ry, (unsigned)buttons, m_cursorX, m_cursorY,
++			width, height, SDL_GetKeyboardFocus() == window ? "yes" : "no");
++		m_traceAtMs = now + 5000;
++	}
++	m_inputSeen = m_inputSeen || input;
++}
++
++void SDL3Gamepad::close(void)
++{
++	if (m_pad != nullptr)
++	{
++		SDL_CloseGamepad(m_pad);
++		m_pad = nullptr;
++	}
++}
++
++void SDL3Gamepad::pushMouseButton(SDL_Window *window, Uint8 button, bool down)
++{
++	SDL_Event event;
++	SDL_zero(event);
++	event.type = down ? SDL_EVENT_MOUSE_BUTTON_DOWN : SDL_EVENT_MOUSE_BUTTON_UP;
++	event.button.timestamp = SDL_GetTicksNS();
++	event.button.windowID = SDL_GetWindowID(window);
++	event.button.button = button;
++	event.button.down = down;
++	event.button.clicks = 1;
++	event.button.x = m_cursorX;
++	event.button.y = m_cursorY;
++	SDL_PushEvent(&event);
++}
++
++void SDL3Gamepad::pushKey(SDL_Window *window, SDL_Scancode scancode, bool down)
++{
++	SDL_Event event;
++	SDL_zero(event);
++	event.type = down ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
++	event.key.timestamp = SDL_GetTicksNS();
++	event.key.windowID = SDL_GetWindowID(window);
++	event.key.scancode = scancode;
++	event.key.key = SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false);
++	event.key.mod = SDL_GetModState();
++	event.key.down = down;
++	SDL_PushEvent(&event);
++}
++
++// Press or release a key, once per change. Held modifiers also go into SDL's modifier state,
++// which events and SDL_GetModState() report.
++void SDL3Gamepad::setKey(SDL_Window *window, SDL_Scancode scancode, bool down)
++{
++	if (m_keys[scancode] == down)
++	{
++		return;
++	}
++	m_keys[scancode] = down;
++
++	SDL_Keymod modifier = SDL_KMOD_NONE;
++	if (scancode == SDL_SCANCODE_LSHIFT) modifier = SDL_KMOD_LSHIFT;
++	if (scancode == SDL_SCANCODE_LCTRL) modifier = SDL_KMOD_LCTRL;
++	if (modifier != SDL_KMOD_NONE)
++	{
++		const SDL_Keymod mods = SDL_GetModState();
++		SDL_SetModState(down ? (SDL_Keymod)(mods | modifier) : (SDL_Keymod)(mods & ~modifier));
++	}
++	pushKey(window, scancode, down);
++}
++
++void SDL3Gamepad::releaseAll(SDL_Window *window)
++{
++	if (m_buttons[SDL_GAMEPAD_BUTTON_SOUTH]) pushMouseButton(window, SDL_BUTTON_LEFT, false);
++	if (m_buttons[SDL_GAMEPAD_BUTTON_EAST]) pushMouseButton(window, SDL_BUTTON_RIGHT, false);
++	for (int scancode = 0; scancode < SDL_SCANCODE_COUNT; ++scancode)
++	{
++		setKey(window, (SDL_Scancode)scancode, false);
++	}
++	memset(m_buttons, 0, sizeof(m_buttons));
++	if (TheLookAtTranslator != nullptr)
++	{
++		TheLookAtTranslator->setStickScroll(0.0f, 0.0f);
++	}
++}
++
++void SDL3Gamepad::moveCursor(SDL_Window *window, float dt)
++{
++	int width = 0;
++	int height = 0;
++	SDL_GetWindowSize(window, &width, &height);
++	if (width <= 0 || height <= 0)
++	{
++		return;
++	}
++
++	const float x = axis(m_pad, SDL_GAMEPAD_AXIS_LEFTX);
++	const float y = axis(m_pad, SDL_GAMEPAD_AXIS_LEFTY);
++	const float magnitude = std::sqrt(x * x + y * y);
++	if (magnitude < kStickDeadZone)
++	{
++		// Follow a real mouse while the stick rests, so the two never fight.
++		SDL_GetMouseState(&m_cursorX, &m_cursorY);
++		return;
++	}
++
++	// Past the dead zone, speed grows with the square of the deflection: fine aim near the centre.
++	const float scaled = (magnitude - kStickDeadZone) / (1.0f - kStickDeadZone);
++	const float speed = scaled * scaled * kCursorScreensPerSecond * (float)height;
++	m_cursorX += x / magnitude * speed * dt;
++	m_cursorY += y / magnitude * speed * dt;
++	m_cursorX = SDL_clamp(m_cursorX, 0.0f, (float)(width - 1));
++	m_cursorY = SDL_clamp(m_cursorY, 0.0f, (float)(height - 1));
++	SDL_WarpMouseInWindow(window, m_cursorX, m_cursorY);
++}
++
++// The right stick scrolls the map through the camera's own scrolling, at up to the keyboard scroll
++// speed. (The arrow keys would not do: in a game they cycle through units.)
++void SDL3Gamepad::scroll(void)
++{
++	if (TheLookAtTranslator == nullptr)
++	{
++		return;
++	}
++	const float x = axis(m_pad, SDL_GAMEPAD_AXIS_RIGHTX);
++	const float y = axis(m_pad, SDL_GAMEPAD_AXIS_RIGHTY);
++	const float magnitude = std::sqrt(x * x + y * y);
++	if (magnitude < kStickDeadZone)
++	{
++		TheLookAtTranslator->setStickScroll(0.0f, 0.0f);
++		return;
++	}
++	const float scaled = SDL_min((magnitude - kStickDeadZone) / (1.0f - kStickDeadZone), 1.0f);
++	const float speed = scaled * scaled;
++	TheLookAtTranslator->setStickScroll(x / magnitude * speed, y / magnitude * speed);
++}
++
++void SDL3Gamepad::update(SDL_Window *window)
++{
++	if (window == nullptr)
++	{
++		return;
++	}
++	if (!m_subsystemReady)
++	{
++		m_subsystemReady = SDL_InitSubSystem(SDL_INIT_GAMEPAD);
++		if (!m_subsystemReady)
++		{
++			if (!m_initFailureLogged)
++			{
++				fprintf(stderr, "WARNING: Gamepad: SDL's gamepad support did not start: %s\n", SDL_GetError());
++				m_initFailureLogged = true;
++			}
++			return;
++		}
++		fprintf(stderr, "INFO: Gamepad: SDL's gamepad support started\n");
++		SDL_GetMouseState(&m_cursorX, &m_cursorY);
++	}
++
++	const Uint64 nowNs = SDL_GetTicksNS();
++	const float dt = m_lastTicksNs == 0 ? 0.0f : SDL_min((nowNs - m_lastTicksNs) / 1.0e9f, 0.1f);
++	m_lastTicksNs = nowNs;
++
++	if (m_pad != nullptr && !SDL_GamepadConnected(m_pad))
++	{
++		releaseAll(window);
++		close();
++	}
++	if (m_pad == nullptr)
++	{
++		if (SDL_GetTicks() < m_nextScanMs)
++		{
++			return;
++		}
++		m_nextScanMs = SDL_GetTicks() + kScanIntervalMs;
++		open();
++		if (m_pad == nullptr)
++		{
++			return;
++		}
++	}
++
++	trace(window);
++	moveCursor(window, dt);
++	scroll();
++
++	// Clicks happen where the cursor is now.
++	const struct { SDL_GamepadButton button; Uint8 mouse; } clicks[] = {
++		{ SDL_GAMEPAD_BUTTON_SOUTH, SDL_BUTTON_LEFT },
++		{ SDL_GAMEPAD_BUTTON_EAST, SDL_BUTTON_RIGHT },
++	};
++	for (const auto &click : clicks)
++	{
++		const bool down = SDL_GetGamepadButton(m_pad, click.button);
++		if (down != m_buttons[click.button])
++		{
++			m_buttons[click.button] = down;
++			pushMouseButton(window, click.mouse, down);
++		}
++	}
++
++	for (const ButtonKey &binding : kButtonKeys)
++	{
++		setKey(window, binding.scancode, SDL_GetGamepadButton(m_pad, binding.button));
++	}
++
++	// The triggers hold the game's zoom keys.
++	setKey(window, SDL_SCANCODE_KP_2, axis(m_pad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER) > kTriggerThreshold);
++	setKey(window, SDL_SCANCODE_KP_8, axis(m_pad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > kTriggerThreshold);
++}
++
++#endif // !_WIN32
+diff --git a/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Mouse.cpp b/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Mouse.cpp
+index 151d3760c..84d5993bd 100644
+--- a/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Mouse.cpp
++++ b/Generals/Code/GameEngineDevice/Source/SDL3Device/GameClient/SDL3Mouse.cpp
+@@ -47,6 +47,13 @@
+ #include "Common/Debug.h"
+ #include "Common/file.h"
+ #include "Common/FileSystem.h"
++#if defined(SAGE_PLATFORM_PS5)
++// GeneralsX @feature PS5 13/10/2026 The game draws the cursor as 2D images (drawConsoleCursor)
++#include "Common/GameDefines.h"
++#include "GameClient/Image.h"
++#include "WW3D2/surfaceclass.h"
++#include "WW3D2/texture.h"
++#endif
+ 
+ /**
+  * AnimatedCursor - Helper struct for cursor animation (fighter19 pattern)
+@@ -57,6 +64,14 @@ struct AnimatedCursor {
+ 	std::array<SDL_Surface*, MAX_2D_CURSOR_ANIM_FRAMES> m_frameSurfaces;
+ 	int m_frameCount = 0;
+ 	int m_frameRate = 0; // the time a frame is displayed in 1/60th of a second
++	// GeneralsX @feature PS5 13/10/2026 Kept for cursors drawn by the game (no OS cursor on the PS5)
++	int m_hotSpotX = 0;
++	int m_hotSpotY = 0;
++#if defined(SAGE_PLATFORM_PS5)
++	// Each frame as a texture and an image for the game's 2D renderer, made when first drawn.
++	std::array<TextureClass*, MAX_2D_CURSOR_ANIM_FRAMES> m_frameTextures = {};
++	std::array<Image*, MAX_2D_CURSOR_ANIM_FRAMES> m_frameImages = {};
++#endif
+ 
+ 	~AnimatedCursor()
+ 	{
+@@ -73,6 +88,14 @@ struct AnimatedCursor {
+ 				SDL_DestroySurface(m_frameSurfaces[i]);
+ 				m_frameSurfaces[i] = nullptr;
+ 			}
++#if defined(SAGE_PLATFORM_PS5)
++			if (m_frameImages[i])
++			{
++				deleteInstance(m_frameImages[i]);
++				m_frameImages[i] = nullptr;
++			}
++			REF_PTR_RELEASE(m_frameTextures[i]);
++#endif
+ 		}
+ 	}
+ };
+@@ -236,7 +259,7 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 			int frame_index = 0;
+ 			int hot_spot_x = 0;
+ 			int hot_spot_y = 0;
+-			#ifdef __linux__
++			#if defined(__linux__) || defined(SAGE_PLATFORM_PS5)
+ 			bool has_hotspot = false;
+ 			#endif
+ 
+@@ -259,7 +282,7 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 
+ 					// Allow specifying the hot spot via properties on the surface
+ 					SDL_PropertiesID props = SDL_GetSurfaceProperties(surface);
+-					#ifdef __linux__
++					#if defined(__linux__) || defined(SAGE_PLATFORM_PS5)
+ 					if (!has_hotspot)
+ 					{
+ 						hot_spot_x = (int)SDL_GetNumberProperty(props, SDL_PROP_SURFACE_HOTSPOT_X_NUMBER, 0);
+@@ -289,7 +312,7 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 				const int clamped_rate = (cursor->m_frameRate > 0) ? cursor->m_frameRate : 4;
+ 				const Uint32 frame_duration_ms = (Uint32)((clamped_rate * 1000) / 60);
+ 				SDL_CursorFrameInfo frame_infos[MAX_2D_CURSOR_ANIM_FRAMES];
+-				#ifdef __linux__
++				#if defined(__linux__) || defined(SAGE_PLATFORM_PS5)
+ 				SDL_Surface *first_surface = cursor->m_frameSurfaces[0];
+ 				#endif
+ 
+@@ -299,7 +322,7 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 					frame_infos[i].duration = frame_duration_ms;
+ 				}
+ 
+-				#ifdef __linux__
++				#if defined(__linux__) || defined(SAGE_PLATFORM_PS5)
+ 				if (first_surface)
+ 				{
+ 					if (hot_spot_x < 0) hot_spot_x = 0;
+@@ -309,8 +332,18 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 				}
+ 				#endif
+ 
++				cursor->m_hotSpotX = hot_spot_x;
++				cursor->m_hotSpotY = hot_spot_y;
++
++				#if defined(SAGE_PLATFORM_PS5)
++				// GeneralsX @feature PS5 13/10/2026 No OS cursor on the console: the frames are drawn
++				// through Direct3D (drawConsoleCursor), so the cursor is complete without an SDL_Cursor.
++				(void)frame_infos;
++				#else
+ 				// GeneralsX @bugfix felipebraz 28/04/2026 Use SDL native animated cursor to ensure frame playback.
+ 				cursor->m_cursor = SDL_CreateAnimatedCursor(frame_infos, frame_index, hot_spot_x, hot_spot_y);
++				#endif
++				#if !defined(SAGE_PLATFORM_PS5)
+ 				if (!cursor->m_cursor)
+ 				{
+ 					DEBUG_LOG(("SDL3Mouse::loadCursorFromFile: SDL_CreateAnimatedCursor failed [%s]", SDL_GetError()));
+@@ -333,6 +366,7 @@ AnimatedCursor* SDL3Mouse::loadCursorFromFile(const char* filepath)
+ 					return NULL;
+ 					#endif
+ 				}
++				#endif // !SAGE_PLATFORM_PS5
+ 			}
+ 
+ 			break;
+@@ -472,6 +506,21 @@ void SDL3Mouse::setCursor(MouseCursor cursor)
+ 	m_lastSetCursor = cursor;
+ 	m_lastSetDirectionFrame = m_directionFrame;
+ 
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @feature PS5 13/10/2026 Remember the cursor for drawConsoleCursor(): no OS cursor here
++	m_consoleCursor = nullptr;
++	if (cursor != NONE && m_visible)
++	{
++		m_consoleCursor = cursorResources[cursor][m_directionFrame];
++	}
++	if (m_consoleCursor == nullptr || m_consoleCursor->m_frameCount <= 0)
++	{
++		m_consoleCursor = cursorResources[NORMAL][0];
++	}
++	m_currentCursor = cursor;
++	return;
++#endif
++
+ 	bool bUseDefaultCursor = false;
+ 	if (cursor == NONE || !m_visible)
+ 	{
+@@ -511,8 +560,120 @@ void SDL3Mouse::setCursor(MouseCursor cursor)
+ void SDL3Mouse::draw(void)
+ {
+ 	setCursor(m_currentCursor);
++#if defined(SAGE_PLATFORM_PS5)
++	drawConsoleCursor();
++#endif
+ }
+ 
++#if defined(SAGE_PLATFORM_PS5)
++/**
++ * A cursor frame as an image for the game's 2D renderer: an A8R8G8B8 texture holding the frame's
++ * pixels, wrapped in a raw-texture Image as W3DRadar wraps its textures. Made on first use.
++ */
++static const Image *consoleCursorImage(AnimatedCursor *cursor, int frameIndex)
++{
++	if (cursor->m_frameImages[frameIndex] != nullptr)
++	{
++		return cursor->m_frameImages[frameIndex];
++	}
++	SDL_Surface *frame = cursor->m_frameSurfaces[frameIndex];
++	if (frame == nullptr)
++	{
++		return nullptr;
++	}
++	SDL_Surface *argb = SDL_ConvertSurface(frame, SDL_PIXELFORMAT_ARGB8888);
++	if (argb == nullptr)
++	{
++		return nullptr;
++	}
++
++	TextureClass *texture = MSGNEW("TextureClass") TextureClass(argb->w, argb->h, WW3D_FORMAT_A8R8G8B8,
++		MIP_LEVELS_1, TextureClass::POOL_MANAGED, false, false);
++	SurfaceClass *surface = texture->Get_Surface_Level();
++	int pitch = 0;
++	Uint8 *bits = surface ? static_cast<Uint8 *>(surface->Lock(&pitch)) : nullptr;
++	if (bits == nullptr)
++	{
++		REF_PTR_RELEASE(surface);
++		REF_PTR_RELEASE(texture);
++		SDL_DestroySurface(argb);
++		return nullptr;
++	}
++	// SDL's ARGB8888 and Direct3D's A8R8G8B8 are the same bytes in memory.
++	for (int y = 0; y < argb->h; ++y)
++	{
++		memcpy(bits + y * pitch, static_cast<const Uint8 *>(argb->pixels) + y * argb->pitch, argb->w * 4);
++	}
++	surface->Unlock();
++	REF_PTR_RELEASE(surface);
++
++	Image *image = newInstance(Image);
++	Region2D uv;
++	uv.lo.x = 0.0f;
++	uv.lo.y = 0.0f;
++	uv.hi.x = 1.0f;
++	uv.hi.y = 1.0f;
++	ICoord2D size;
++	size.x = argb->w;
++	size.y = argb->h;
++	image->setStatus(IMAGE_STATUS_RAW_TEXTURE);
++	image->setRawTextureData(texture);
++	image->setUV(&uv);
++	image->setTextureWidth(size.x);
++	image->setTextureHeight(size.y);
++	image->setImageSize(&size);
++	SDL_DestroySurface(argb);
++
++	cursor->m_frameTextures[frameIndex] = texture;
++	cursor->m_frameImages[frameIndex] = image;
++	return image;
++}
++
++/**
++ * Draw the cursor on the PS5, where there is no OS cursor.
++ * GeneralsX @feature PS5 13/10/2026 The selected cursor's current .ani frame is drawn by the
++ * game, as a 2D image after the user interface (W3DDisplay calls draw() there), placed by its hot
++ * spot at the mouse position, in the same coordinates the game hit-tests clicks in. DXVK's D3D9
++ * cursor, the original W3DMouse's RM_DX8 path, exists only on Windows.
++ */
++void SDL3Mouse::drawConsoleCursor(void)
++{
++	AnimatedCursor *cursor = m_IsVisible ? m_consoleCursor : nullptr;
++	const Uint64 now = SDL_GetTicks();
++	if (now >= m_consoleTraceAt && now < 180000)
++	{
++		fprintf(stderr, "INFO: Mouse: %u events, at (%d, %d), cursor %s\n", m_consoleEvents,
++			m_currMouse.pos.x, m_currMouse.pos.y, cursor ? "drawn" : (m_IsVisible ? "missing" : "hidden"));
++		m_consoleTraceAt = now + 5000;
++	}
++	if (cursor == nullptr || cursor->m_frameCount <= 0 || TheDisplay == nullptr)
++	{
++		return;
++	}
++
++	// The .ani rate is the time a frame shows, in 1/60ths of a second.
++	const Uint64 jiffies = now * 60 / 1000;
++	const int rate = cursor->m_frameRate > 0 ? cursor->m_frameRate : 4;
++	int frameIndex = (int)((jiffies / (Uint64)rate) % (Uint64)cursor->m_frameCount);
++	if (cursor->m_frameSurfaces[frameIndex] == nullptr)
++	{
++		frameIndex = 0;
++	}
++	const Image *image = consoleCursorImage(cursor, frameIndex);
++	if (image == nullptr)
++	{
++		return;
++	}
++
++	// The size a PC player saw at the game's 1024x768 design resolution, so it reads on a TV.
++	const Real scale = MAX(1.0f, (Real)TheDisplay->getHeight() / (Real)DEFAULT_DISPLAY_HEIGHT);
++	const Int left = m_currMouse.pos.x - REAL_TO_INT(cursor->m_hotSpotX * scale);
++	const Int top = m_currMouse.pos.y - REAL_TO_INT(cursor->m_hotSpotY * scale);
++	TheDisplay->drawImage(image, left, top,
++		left + REAL_TO_INT(image->getImageWidth() * scale), top + REAL_TO_INT(image->getImageHeight() * scale));
++}
++#endif
++
+ #ifndef M_PI
+ #define M_PI 3.14159265358979323846f
+ #endif
+@@ -926,6 +1087,9 @@ void SDL3Mouse::addSDLEvent(SDL_Event *event)
+ 
+ 	// Copy entire event to buffer
+ 	m_eventBuffer[m_nextFreeIndex] = *event;
++#if defined(SAGE_PLATFORM_PS5)
++	++m_consoleEvents;
++#endif
+ 
+ 	// GeneralsX @bugfix BenderAI 18/02/2026 Temporarily disable debug logging (Phase 1.8)
+ 	// fprintf(stderr, "DEBUG: SDL3Mouse::addSDLEvent() type=%u index=%u\n", event->type, m_nextFreeIndex);
+diff --git a/Generals/Code/GameEngineDevice/Source/SDL3GameEngine.cpp b/Generals/Code/GameEngineDevice/Source/SDL3GameEngine.cpp
+index c086ecf90..55e13d923 100644
+--- a/Generals/Code/GameEngineDevice/Source/SDL3GameEngine.cpp
++++ b/Generals/Code/GameEngineDevice/Source/SDL3GameEngine.cpp
+@@ -131,9 +131,14 @@ SDL3GameEngine::SDL3GameEngine()
+ 	  m_IsInitialized(false),
+ 	  m_IsActive(false),
+ 	  m_IsTextInputActive(false),
+-	  m_TextInputFocusWindow(nullptr)
++	  m_TextInputFocusWindow(nullptr),
++#if defined(SAGE_PLATFORM_PS5)
++	  m_IsGamepadEnabled(true)
++#else
++	  m_IsGamepadEnabled(getenv("GENERALSX_GAMEPAD") != nullptr)
++#endif
+ {
+-	fprintf(stderr, "DEBUG: SDL3GameEngine::SDL3GameEngine() created\n");
++	fprintf(stderr, "DEBUG: SDL3GameEngine::SDL3GameEngine() created (gamepad %s)\n", m_IsGamepadEnabled ? "on" : "off");
+ }
+ 
+ /**
+@@ -266,6 +271,11 @@ void SDL3GameEngine::pollSDL3Events(void)
+ 
+ 	updateTextInputState();
+ 
++	// GeneralsX @feature PS5 13/10/2026 The gamepad's mouse and keyboard events join the queue first
++	if (m_IsGamepadEnabled) {
++		m_Gamepad.update(m_SDLWindow);
++	}
++
+ 	SDL_Event event;
+ 	while (SDL_PollEvent(&event)) {
+ 		switch (event.type) {
+diff --git a/Generals/Code/Main/CMakeLists.txt b/Generals/Code/Main/CMakeLists.txt
+index e24f3cac1..a795034fa 100644
+--- a/Generals/Code/Main/CMakeLists.txt
++++ b/Generals/Code/Main/CMakeLists.txt
+@@ -34,6 +34,14 @@ if(SAGE_USE_SDL3)
+     target_link_libraries(g_generals PRIVATE sdl3lib)
+ endif()
+ 
++# GeneralsX @build PS5 13/10/2026 PS5: the title runtime (klog, exit through the shell) and
++# DXVK's D3D8, linked statically (cmake/ps5.cmake)
++if(PS5)
++    target_sources(g_generals PRIVATE ${SAGE_PS5_DIR}/runtime/ps5_title.c)
++    target_include_directories(g_generals PRIVATE ${SAGE_PS5_DIR}/runtime)
++    target_link_libraries(g_generals PRIVATE ${SAGE_PS5_DXVK_LIB})
++endif()
++
+ # TODO Originally referred to build host and user, replace with git info perhaps?
+ file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/GeneratedVersion.h
+ "#pragma once
+diff --git a/Generals/Code/Main/SDL3Main.cpp b/Generals/Code/Main/SDL3Main.cpp
+index 6d6bf306a..227a6901b 100644
+--- a/Generals/Code/Main/SDL3Main.cpp
++++ b/Generals/Code/Main/SDL3Main.cpp
+@@ -53,6 +53,12 @@
+ #define DXVK_WSI_SDL3 1
+ #include <wsi/native_wsi.h>
+ 
++#ifdef SAGE_PLATFORM_PS5
++#include <cerrno>
++#include <sys/stat.h>
++#include "ps5_title.h"
++#endif
++
+ // CRITICAL SECTIONS (Linux needs these too)
+ static CriticalSection critSec1;
+ static CriticalSection critSec2;
+@@ -207,6 +213,50 @@ static void FilterPipeWireOpenAL()
+ 	#endif
+ }
+ 
++#ifdef SAGE_PLATFORM_PS5
++/**
++ * SetupPS5Title
++ *
++ * GeneralsX @build PS5 13/10/2026 The console title's environment, before anything else runs:
++ * standard error to the kernel log, the game data in the title folder (/app0, which the
++ * virtual current directory also starts in: ps5/runtime/ps5_vcwd.c), and HOME pointing at
++ * writable storage for Options.ini, saves and replays: the title's download data when the
++ * console gives it one, else a folder beside the game. A title has no environment of its own.
++ */
++static void SetupPS5Title()
++{
++	ps5_title_init("C&C Generals");
++
++	// A log to fetch over FTP: ShadowMountPlus gives the title the console's /data.
++	if (mkdir("/data/generals", 0777) == 0 || errno == EEXIST) {
++		if (ps5_title_log_file("/data/generals/generals.log") == 0) {
++			ps5_say("log file /data/generals/generals.log");
++		}
++	}
++
++	// SDL's controller, mouse and keyboard drivers say what they found (SDL logs to stderr).
++	SDL_SetLogPriority(SDL_LOG_CATEGORY_INPUT, SDL_LOG_PRIORITY_INFO);
++	// SDL drops controller input while no window has keyboard focus. The title is the console's
++	// only app on screen, and the shell takes the pad itself when it is in front.
++	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
++
++	struct stat st;
++	const char *home = (stat("/download0", &st) == 0 && S_ISDIR(st.st_mode)) ? "/download0" : "/app0/userdata";
++	if (strcmp(home, "/app0/userdata") == 0 && mkdir(home, 0777) == 0) {
++		chmod(home, 0777);
++	}
++	setenv("HOME", home, 1);
++	setenv("CNC_GENERALS_PATH", "/app0/", 1);
++	setenv("DXVK_WSI_DRIVER", "SDL3", 1);
++	// The Vulkan driver's compiled-shader cache: it otherwise tries the read-only title folder and
++	// gives up, compiling every shader again on each run.
++	char shaderCache[64];
++	snprintf(shaderCache, sizeof(shaderCache), "%s/radv-shader-cache", home);
++	setenv("MESA_SHADER_CACHE_DIR", shaderCache, 0);
++	ps5_say("game data /app0, user data %s", home);
++}
++#endif
++
+ /**
+  * CreateGameEngine
+  *
+@@ -236,6 +286,10 @@ int main(int argc, char* argv[])
+ {
+ 	int exitcode = 1;
+ 
++#ifdef SAGE_PLATFORM_PS5
++	SetupPS5Title();
++#endif
++
+ 	// TheSuperHackers @build felipebraz 13/02/2026
+ 	// Store command line arguments in globals for CommandLine.cpp parser
+ 	__argc = argc;
+@@ -290,8 +344,11 @@ int main(int argc, char* argv[])
+ 			// GeneralsX @bugfix BenderAI 06/03/2026 - Exclude LLVMpipe Vulkan ICD before loading Vulkan.
+ 			// libvulkan_lvp.so crashes during static initialization with LLVM 20.x when the Vulkan
+ 			// loader enumerates all ICDs. Restrict to hardware ICDs first.
++			// GeneralsX @build PS5 13/10/2026 The PS5 has one linked Vulkan driver and no OpenAL.
++#ifndef SAGE_PLATFORM_PS5
+ 			FilterSoftwareVulkanICDs();
+ 			FilterPipeWireOpenAL();
++#endif
+ 
+ 			// Load Vulkan library for DXVK DirectX8→Vulkan translation
+ 			fprintf(stderr, "INFO: Loading Vulkan library...\n");
+@@ -394,7 +451,12 @@ int main(int argc, char* argv[])
+ 	// pool block memory was already reused/overwritten during game shutdown.
+ 	// Windows never had this problem — ExitProcess() terminates without running C++ global dtors.
+ 	// _exit() matches that behavior. Explicit cleanup already done above (SDL_Quit, shutdownMemoryManager).
++#ifdef SAGE_PLATFORM_PS5
++	// GeneralsX @build PS5 13/10/2026 A title never exits itself: it asks the shell to close it
++	ps5_title_exit(exitcode);
++#else
+ 	_exit(exitcode);
++#endif
+ }
+ 
+ #endif // !_WIN32
+diff --git a/GeneralsMD/Code/CompatLib/CMakeLists.txt b/GeneralsMD/Code/CompatLib/CMakeLists.txt
+index 332239636..3fb3c664e 100644
+--- a/GeneralsMD/Code/CompatLib/CMakeLists.txt
++++ b/GeneralsMD/Code/CompatLib/CMakeLists.txt
+@@ -78,7 +78,8 @@ else()
+     if(NOT dxvk_SOURCE_DIR)
+         message(FATAL_ERROR "DXVK not fetched! Ensure SAGE_USE_DX8=OFF and cmake/dx8.cmake was included")
+     endif()
+-    if(APPLE)
++    # GeneralsX @build PS5 13/10/2026 PS5 builds DXVK from source too: same layout as macOS
++    if(APPLE OR PS5)
+         # macOS: DXVK built from git source -- Wine-style include/native layout
+         target_include_directories(d3d8lib INTERFACE
+             ${dxvk_SOURCE_DIR}/include/native
+@@ -96,7 +97,7 @@ else()
+     # (_deps/dxvk-build-macos/src/d3d*/), not in ${dxvk_SOURCE_DIR}/lib — that path does not exist.
+     # Linux prebuilt DXVK native package does have a lib/ dir, so the guard is macOS-only.
+     # Passing a non-existent -L path produces: ld: warning: search path '.../dxvk-src/lib' not found
+-    if(NOT APPLE)
++    if(NOT APPLE AND NOT PS5)
+         target_link_directories(d3d8lib INTERFACE
+             ${dxvk_SOURCE_DIR}/lib
+         )
+diff --git a/GeneralsMD/Code/CompatLib/Include/memory_compat.h b/GeneralsMD/Code/CompatLib/Include/memory_compat.h
+index af8971ba9..f6386eba3 100644
+--- a/GeneralsMD/Code/CompatLib/Include/memory_compat.h
++++ b/GeneralsMD/Code/CompatLib/Include/memory_compat.h
+@@ -7,6 +7,9 @@
+ #include <malloc.h>
+ #elif __APPLE__
+ #include <malloc/malloc.h>
++#elif defined(__FreeBSD__)
++// GeneralsX @build PS5 13/10/2026 FreeBSD (the PS5) declares malloc_usable_size here
++#include <malloc_np.h>
+ #endif
+ 
+ #define GMEM_FIXED 0
+@@ -23,7 +26,7 @@ static void GlobalFree(void *ptr)
+ 
+ static size_t GlobalSize(void *ptr)
+ {
+-#ifdef __linux__
++#if defined(__linux__) || defined(__FreeBSD__)
+   return malloc_usable_size(ptr);
+ #elif defined(__APPLE__)
+   return malloc_size(ptr);
+diff --git a/GeneralsMD/Code/CompatLib/Source/module_compat.cpp b/GeneralsMD/Code/CompatLib/Source/module_compat.cpp
+index 52d601eaf..6d6014c79 100644
+--- a/GeneralsMD/Code/CompatLib/Source/module_compat.cpp
++++ b/GeneralsMD/Code/CompatLib/Source/module_compat.cpp
+@@ -3,6 +3,7 @@
+ 
+ #include <unistd.h>
+ #include <dlfcn.h>
++#include <stdio.h>
+ #include <string.h>
+ 
+ // GeneralsX @feature BenderAI 24/02/2026 Phase 5 macOS executable path detection
+@@ -12,7 +13,11 @@
+ 
+ bool GetModuleFileName(HINSTANCE hInstance, char* buffer, int size)
+ {
+-#ifdef __linux__
++#if defined(SAGE_PLATFORM_PS5)
++  // GeneralsX @build PS5 13/10/2026 A PS5 title is /app0/eboot.bin (no /proc to ask)
++  snprintf(buffer, size, "%s", "/app0/eboot.bin");
++  return true;
++#elif defined(__linux__)
+   ssize_t count = readlink("/proc/self/exe", buffer, size);
+   if (count == -1)
+     return false;
+diff --git a/cmake/config-build.cmake b/cmake/config-build.cmake
+index e4a7694a3..fc7ce82e5 100644
+--- a/cmake/config-build.cmake
++++ b/cmake/config-build.cmake
+@@ -98,6 +98,12 @@ if(UNIX)
+         HAVE_STRLCPY HAVE_STRLCAT HAVE_WCSLCPY HAVE_WCSLCAT)
+ endif()
+ 
++# GeneralsX @build PS5 13/10/2026 PlayStation 5 homebrew: the payload SDK's toolchain file sets PS5.
++# The console is FreeBSD to the compiler; SAGE_PLATFORM_PS5 marks what differs from desktop Unix.
++if(PS5)
++    target_compile_definitions(core_config INTERFACE SAGE_PLATFORM_PS5)
++endif()
++
+ if(RTS_BUILD_OPTION_DEBUG)
+     target_compile_definitions(core_config INTERFACE RTS_DEBUG WWDEBUG DEBUG)
+ else()
+diff --git a/cmake/dx8.cmake b/cmake/dx8.cmake
+index 2da5151af..df491b591 100644
+--- a/cmake/dx8.cmake
++++ b/cmake/dx8.cmake
+@@ -193,6 +193,15 @@ elseif(APPLE AND SAGE_USE_MOLTENVK)
+   message(STATUS "DXVK source directory: ${DXVK_SOURCE_DIR}")
+   message(STATUS "DXVK d3d8 library:     ${DXVK_D3D8_LIB}")
+ 
++elseif(PS5)
++  # GeneralsX @build PS5 13/10/2026 PS5: DXVK is built from a source checkout (its ps5 branch) as
++  # static libraries linked into the title; only its headers (source tree layout) are needed here.
++  if(NOT SAGE_PS5_DXVK_DIR)
++    message(FATAL_ERROR "The PS5 build needs -DSAGE_PS5_DXVK_DIR=<DXVK source checkout>")
++  endif()
++  set(dxvk_SOURCE_DIR "${SAGE_PS5_DXVK_DIR}")
++  message(STATUS "Using DXVK headers from ${dxvk_SOURCE_DIR} (PS5, linked statically)")
++
+ else()
+   # Linux: Fetch pre-built DXVK native binary for DirectX→Vulkan translation
+   # Native 32-bit and 64-bit Linux binaries (.so)
+diff --git a/cmake/gamemath.cmake b/cmake/gamemath.cmake
+index 729ffdd81..e2d2e1fd8 100644
+--- a/cmake/gamemath.cmake
++++ b/cmake/gamemath.cmake
+@@ -37,10 +37,20 @@ if(SAGE_USE_DETERMINISTIC_MATH)
+     set(GM_ENABLE_TESTS OFF CACHE BOOL "Disable GameMath tests" FORCE)
+     set(gamemath_SHARED_LIBS OFF CACHE BOOL "Force GameMath as static lib" FORCE)
+ 
++    # GeneralsX @build PS5 13/10/2026 gmath.h is FreeBSD's math.h: its C99 section (classification
++    # macros, isnan, double_t) is off on Linux and macOS, whose headers leave __ISO_C_VISIBLE
++    # undefined, but on the PS5, which is FreeBSD, it comes on and collides with the system's and
++    # with GameMath's own declarations. Keep it off there too (cmake/patches/gamemath-ps5.cmake).
++    set(gamemath_patch "")
++    if(PS5)
++        set(gamemath_patch PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/patches/gamemath-ps5.cmake)
++    endif()
++
+     FetchContent_Declare(
+         gamemath
+         GIT_REPOSITORY https://github.com/TheSuperHackers/GameMath.git
+         GIT_TAG        59f7ccd494f7e7c916a784ac26ef266f9f09d78d
++        ${gamemath_patch}
+     )
+ 
+     # Make GameMath available (FetchContent_MakeAvailable is idempotent)
+diff --git a/cmake/gamespy.cmake b/cmake/gamespy.cmake
+index 4c4986287..556baca3e 100644
+--- a/cmake/gamespy.cmake
++++ b/cmake/gamespy.cmake
+@@ -1,10 +1,18 @@
+ set(GS_OPENSSL FALSE)
+ set(GAMESPY_SERVER_NAME "server.cnc-online.net")
+ 
++# GeneralsX @build PS5 13/10/2026 The SDK picks its Unix code by __linux__; the PS5 has the same
++# interfaces and takes that path too (cmake/patches/gamespy-ps5.cmake).
++set(gamespy_patch "")
++if(PS5)
++    set(gamespy_patch PATCH_COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/patches/gamespy-ps5.cmake)
++endif()
++
+ FetchContent_Declare(
+     gamespy
+     GIT_REPOSITORY https://github.com/TheSuperHackers/GamespySDK.git
+     GIT_TAG        07e3d15c500415abc281efb74322ab6d9c857eb8
++    ${gamespy_patch}
+ )
+ 
+ FetchContent_MakeAvailable(gamespy)
+diff --git a/cmake/miniaudio.cmake b/cmake/miniaudio.cmake
+index 57936e085..f254e6519 100644
+--- a/cmake/miniaudio.cmake
++++ b/cmake/miniaudio.cmake
+@@ -54,6 +54,11 @@ if(SAGE_USE_MINIAUDIO)
+             # Use CoreAudio on macOS
+             target_compile_definitions(miniaudio_lib INTERFACE
+                 MA_NO_WASAPI MA_NO_DSOUND MA_NO_WINMM)
++        elseif(PS5)
++            # GeneralsX @build PS5 13/10/2026 Only the custom AudioOut backend (MiniAudioPS5Backend.h);
++            # the console has no OSS and no dlopen.
++            target_compile_definitions(miniaudio_lib INTERFACE
++                MA_ENABLE_ONLY_SPECIFIC_BACKENDS MA_ENABLE_CUSTOM MA_NO_RUNTIME_LINKING)
+         elseif(UNIX)
+             # Use ALSA on Linux (PulseAudio/PipeWire via ALSA compat)
+             target_compile_definitions(miniaudio_lib INTERFACE
+diff --git a/cmake/patches/gamemath-ps5.cmake b/cmake/patches/gamemath-ps5.cmake
+new file mode 100644
+index 000000000..e9255dfd3
+--- /dev/null
++++ b/cmake/patches/gamemath-ps5.cmake
+@@ -0,0 +1,27 @@
++# GeneralsX @build PS5 13/10/2026 Run as GameMath's FetchContent patch step (cmake/gamemath.cmake),
++# in its source directory. gmath.h is FreeBSD's math.h, and the PS5 is FreeBSD:
++#  - its C99 section is off on Linux and macOS, whose headers leave __ISO_C_VISIBLE undefined, but
++#    comes on for the PS5 and collides with the system's declarations and GameMath's own;
++#  - the PS5's <math.h> declares signgam outside its extern "C" block, so gmath.h's own declaration
++#    (inside one) conflicts in C++; the system's serves.
++# An edit already made is not made again.
++function(patch_for_ps5 path from to)
++    file(READ "${path}" content)
++    string(FIND "${content}" "${to}" already)
++    if(NOT already EQUAL -1)
++        return()
++    endif()
++    string(FIND "${content}" "${from}" found)
++    if(found EQUAL -1)
++        message(FATAL_ERROR "gamemath-ps5.cmake: '${from}' not found in ${path}")
++    endif()
++    string(REPLACE "${from}" "${to}" content "${content}")
++    file(WRITE "${path}" "${content}")
++endfunction()
++
++patch_for_ps5(include/gmath.h
++    "#if __ISO_C_VISIBLE >= 1999\n"
++    "#if __ISO_C_VISIBLE >= 1999 && !defined(__PROSPERO__)\n")
++patch_for_ps5(include/gmath.h
++    "extern int signgam;\n"
++    "#if !defined(__PROSPERO__) /* the PS5's <math.h> declares it */\nextern int signgam;\n#endif\n")
+diff --git a/cmake/patches/gamespy-ps5.cmake b/cmake/patches/gamespy-ps5.cmake
+new file mode 100644
+index 000000000..7afc6b9e7
+--- /dev/null
++++ b/cmake/patches/gamespy-ps5.cmake
+@@ -0,0 +1,27 @@
++# GeneralsX @build PS5 13/10/2026 Run as the GameSpy SDK's FetchContent patch step (cmake/gamespy.cmake),
++# in its source directory. The SDK picks its Unix code (BSD sockets, pthreads: its linux/ sources) by
++# __linux__; the PS5 (FreeBSD to the compiler, __PROSPERO__) has the same interfaces, so it takes that
++# path too. A file already patched is left alone.
++function(patch_for_ps5 path from to)
++    file(READ "${path}" content)
++    string(FIND "${content}" "__PROSPERO__" already)
++    if(NOT already EQUAL -1)
++        return()
++    endif()
++    string(FIND "${content}" "${from}" found)
++    if(found EQUAL -1)
++        message(FATAL_ERROR "gamespy-ps5.cmake: '${from}' not found in ${path}")
++    endif()
++    string(REPLACE "${from}" "${to}" content "${content}")
++    file(WRITE "${path}" "${content}")
++endfunction()
++
++patch_for_ps5(include/gamespy/gscommon.h
++    "#if !defined(_LINUX) && (defined(__linux__) ||"
++    "#if !defined(_LINUX) && (defined(__linux__) || defined(__PROSPERO__) ||")
++patch_for_ps5(include/gamespy/gsplatform.h
++    "#if defined(__linux__) || (defined(__APPLE__)"
++    "#if defined(__linux__) || defined(__PROSPERO__) || (defined(__APPLE__)")
++foreach(path src/common/gsplatformutil.c src/common/gsplatformsocket.c src/common/gsplatformthread.c)
++    patch_for_ps5(${path} "#elif defined(__linux__)" "#elif defined(__linux__) || defined(__PROSPERO__)")
++endforeach()
+diff --git a/cmake/ps5.cmake b/cmake/ps5.cmake
+new file mode 100644
+index 000000000..b7d73199c
+--- /dev/null
++++ b/cmake/ps5.cmake
+@@ -0,0 +1,34 @@
++# GeneralsX @build PS5 13/10/2026 PlayStation 5 homebrew title.
++# The payload SDK's toolchain file sets PS5. The port's own folder (SAGE_PS5_DIR) holds the
++# title runtime and the link script: a PS5 title is linked with the RADV Vulkan driver and
++# signed by that script, not by the SDK's compiler driver, so CMake hands it the objects and
++# static libraries it computed, in link order.
++if(PS5)
++    foreach(var SAGE_PS5_DIR SAGE_PS5_DXVK_DIR SAGE_PS5_DXVK_LIB SAGE_PS5_SCE_SYS SAGE_PS5_DIST)
++        if(NOT ${var})
++            message(FATAL_ERROR "The PS5 build needs -D${var}=... (see the port's scripts/build-generals.sh)")
++        endif()
++    endforeach()
++
++    set(CMAKE_CXX_LINK_EXECUTABLE
++        "bash ${SAGE_PS5_DIR}/tools/cmake-link.sh ${SAGE_PS5_SCE_SYS} ${SAGE_PS5_DIST} <TARGET> <OBJECTS> <LINK_LIBRARIES>")
++    message(STATUS "PS5 title: linked by ${SAGE_PS5_DIR}/tools/cmake-link.sh into ${SAGE_PS5_DIST}")
++
++    # FFmpeg for the Bink videos: the static libraries the port's scripts/build-ffmpeg.sh installs
++    # into the prefix (CMAKE_FIND_ROOT_PATH). The SDK's pkg-config searches only its own sysroot, so
++    # the target the GameEngineDevice libraries otherwise get from pkg_check_modules is made here.
++    if(RTS_BUILD_OPTION_FFMPEG AND NOT TARGET PkgConfig::FFMPEG)
++        find_path(FFMPEG_INCLUDE_DIRS libavcodec/avcodec.h REQUIRED)
++        set(FFMPEG_LIBRARIES)
++        foreach(lib avformat avcodec swscale avutil)
++            find_library(FFMPEG_${lib}_LIBRARY NAMES lib${lib}.a REQUIRED)
++            list(APPEND FFMPEG_LIBRARIES ${FFMPEG_${lib}_LIBRARY})
++        endforeach()
++        add_library(PkgConfig::FFMPEG INTERFACE IMPORTED GLOBAL)
++        set_target_properties(PkgConfig::FFMPEG PROPERTIES
++            INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIRS}"
++            INTERFACE_LINK_LIBRARIES "${FFMPEG_LIBRARIES}")
++        set(FFMPEG_FOUND TRUE)
++        message(STATUS "PS5 title: FFmpeg from ${FFMPEG_INCLUDE_DIRS}")
++    endif()
++endif()
+diff --git a/cmake/sdl3.cmake b/cmake/sdl3.cmake
+index 8de797f00..68844cc4e 100644
+--- a/cmake/sdl3.cmake
++++ b/cmake/sdl3.cmake
+@@ -7,10 +7,18 @@
+ # Our approach: Use FetchContent to download and compile SDL3 directly
+ # This avoids vcpkg issues with libsystemd and complex dependencies
+ 
+-if(SAGE_USE_SDL3)
++if(SAGE_USE_SDL3 AND PS5)
++    # GeneralsX @build PS5 13/10/2026 PS5: SDL3 (with its PS5 video, controller and audio drivers)
++    # and SDL3_image are prebuilt static libraries in the PS5 prefix (scripts/build-sdl3.sh, build-deps.sh).
++    find_package(SDL3 CONFIG REQUIRED)
++    find_package(SDL3_image CONFIG REQUIRED)
++    add_library(sdl3lib INTERFACE)
++    target_link_libraries(sdl3lib INTERFACE SDL3::SDL3 SDL3_image::SDL3_image)
++    message(STATUS "SDL3 ${SDL3_VERSION} + SDL3_image ${SDL3_image_VERSION} (PS5, static)")
++elseif(SAGE_USE_SDL3)
+     set(SDL3_FOUND FALSE)
+     set(SDL3_image_FOUND FALSE)
+-    
++
+     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+         find_package(SDL3 3.4.0 QUIET)
+         find_package(SDL3_image 3.4.0 QUIET)
+diff --git a/cmake/zlib.cmake b/cmake/zlib.cmake
+index 8c41a5f46..1d6261ba5 100644
+--- a/cmake/zlib.cmake
++++ b/cmake/zlib.cmake
+@@ -28,3 +28,21 @@ target_sources(libzlib PRIVATE
+ target_include_directories(libzlib PUBLIC ${ZLIB_DIR})
+ 
+ target_compile_definitions(libzlib PUBLIC Z_PREFIX)
++
++# GeneralsX @build PS5 13/10/2026 The PS5 title also links RADV, which carries zlib 1.3.1. Z_PREFIX
++# leaves zlib 1.1.4's internal and gz* symbols unprefixed, so they would collide with RADV's. The game
++# only calls z_compress2 and z_uncompress; give everything else a private prefix.
++if(PS5)
++    set(_zlib_private_symbols
++        _dist_code _length_code _tr_align _tr_flush_block _tr_init _tr_stored_block _tr_tally
++        deflate_copyright inflate_copyright
++        gzclose gzdopen gzeof gzerror gzflush gzgetc gzgets gzopen gzprintf gzputc gzputs gzread
++        gzrewind gzseek gzsetparams gztell gzwrite
++        inflate_blocks inflate_blocks_free inflate_blocks_new inflate_blocks_reset inflate_blocks_sync_point
++        inflate_codes inflate_codes_free inflate_codes_new inflate_fast inflate_flush inflate_mask
++        inflate_set_dictionary inflate_trees_bits inflate_trees_dynamic inflate_trees_fixed
++        zError zcalloc zcfree zlibVersion z_errmsg)
++    foreach(_symbol IN LISTS _zlib_private_symbols)
++        target_compile_definitions(libzlib PRIVATE ${_symbol}=gxzlib_${_symbol})
++    endforeach()
++endif()
+-- 
+2.55.0.windows.2
+

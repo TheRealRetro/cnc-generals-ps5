@@ -1,0 +1,6 @@
+*.sh text eol=lf
+*.py text eol=lf
+# Patches apply byte for byte.
+*.patch -text
+*.ps1 text eol=crlf
+*.bat text eol=crlf

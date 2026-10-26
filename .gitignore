@@ -1,0 +1,19 @@
+# Retail game data: copyrighted, never commit or share
+/Data Files/
+/GameData/
+
+# EA's patch installers and other downloaded programs
+*.exe
+
+# Console logs (generals.log, ShadowMountPlus's debug.log)
+*.log
+
+# Upstream sources, fetched by scripts/fetch-sources.sh with patches/ applied
+/GeneralsX/
+/dxvk/
+/SDL/
+
+# Build outputs (.ffpkg images contain game data)
+/out/
+*.ffpkg
+*.exfat

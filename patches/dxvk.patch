@@ -1,0 +1,317 @@
+From 2a909fc333cc61cccea152ebda43296799d41729 Mon Sep 17 00:00:00 2001
+From: TheRealRetro <225269622+TheRealRetro@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 14:25:09 -0400
+Subject: [PATCH] PS5 port of C&C Generals: dxvk changes
+
+Changes for the native PS5 homebrew build (see cnc-generals-ps5).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ meson.build                        | 31 +++++++++++++++++++-----------
+ meson_options.txt                  |  2 ++
+ src/d3d8/d3d8_main.cpp             |  6 ++++++
+ src/d3d8/meson.build               |  9 +++++++++
+ src/d3d9/meson.build               |  9 +++++++++
+ src/util/util_env.cpp              | 23 ++++++++++++++++++++++
+ src/util/util_version.h            |  9 +++++++++
+ src/vulkan/vulkan_loader.cpp       | 19 ++++++++++++++++++
+ src/wsi/sdl3/wsi_platform_sdl3.cpp | 12 +++++++++++-
+ src/wsi/wsi_platform.cpp           |  3 +++
+ 10 files changed, 111 insertions(+), 12 deletions(-)
+
+diff --git a/meson.build b/meson.build
+index 26afed45..176f19e3 100644
+--- a/meson.build
++++ b/meson.build
+@@ -150,17 +150,26 @@ else
+   lib_sdl3 = dependency('SDL3', required: false)
+   lib_sdl2 = dependency('SDL2', required: false)
+   lib_glfw = dependency('glfw', required: false)
+-  if lib_sdl3.found()
+-    compiler_args += ['-DDXVK_WSI_SDL3']
+-  endif
+-  if lib_sdl2.found()
+-    compiler_args += ['-DDXVK_WSI_SDL2']
+-  endif
+-  if lib_glfw.found()
+-    compiler_args += ['-DDXVK_WSI_GLFW']
+-  endif
+-  if (not lib_sdl3.found() and not lib_sdl2.found() and not lib_glfw.found())
+-    error('SDL3, SDL2, or GLFW are required to build dxvk-native')
++  if get_option('ps5')
++    # PS5 homebrew: SDL3 (with its PS5 drivers) and the Vulkan driver are
++    # linked into the title, nothing is loaded at run time.
++    if get_option('ps5_sdl3_include') == ''
++      error('ps5 needs -Dps5_sdl3_include=<SDL3 include directory>')
++    endif
++    compiler_args += ['-DDXVK_WSI_SDL3', '-DDXVK_PLATFORM_PS5', '-I' + get_option('ps5_sdl3_include')]
++  else
++    if lib_sdl3.found()
++      compiler_args += ['-DDXVK_WSI_SDL3']
++    endif
++    if lib_sdl2.found()
++      compiler_args += ['-DDXVK_WSI_SDL2']
++    endif
++    if lib_glfw.found()
++      compiler_args += ['-DDXVK_WSI_GLFW']
++    endif
++    if (not lib_sdl3.found() and not lib_sdl2.found() and not lib_glfw.found())
++      error('SDL3, SDL2, or GLFW are required to build dxvk-native')
++    endif
+   endif
+   
+   dxvk_name_prefix = 'dxvk_'
+diff --git a/meson_options.txt b/meson_options.txt
+index 2a621ece..34ba8783 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -4,5 +4,7 @@ option('enable_d3d9',  type : 'boolean', value : true, description: 'Build D3D9'
+ option('enable_d3d10', type : 'boolean', value : true, description: 'Build D3D10')
+ option('enable_d3d11', type : 'boolean', value : true, description: 'Build D3D11')
+ option('build_id',     type : 'boolean', value : false)
++option('ps5',          type : 'boolean', value : false, description: 'PlayStation 5 homebrew: static D3D8/D3D9 libraries, SDL3 and Vulkan linked into the title')
++option('ps5_sdl3_include', type : 'string', value : '', description: 'PS5: the SDL3 include directory (SDL is linked statically, not found through pkg-config)')
+ 
+ option('dxvk_native_wsi',   type : 'string',  value : 'sdl2', description: 'WSI system to use if building natively.')
+\ No newline at end of file
+diff --git a/src/d3d8/d3d8_main.cpp b/src/d3d8/d3d8_main.cpp
+index e4c5213e..009093ba 100644
+--- a/src/d3d8/d3d8_main.cpp
++++ b/src/d3d8/d3d8_main.cpp
+@@ -2,7 +2,10 @@
+ 
+ namespace dxvk {
+ 
++#ifndef DXVK_PLATFORM_PS5
++  // On the PS5, D3D8 and D3D9 are linked into one binary and share d3d9's logger.
+   Logger Logger::s_instance("d3d8.log");
++#endif
+ 
+   HRESULT CreateD3D8(IDirect3D8** ppDirect3D8) {
+     if (!ppDirect3D8)
+@@ -112,7 +115,10 @@ extern "C" {
+     return res;
+   }
+ 
++#ifndef DXVK_PLATFORM_PS5
++  // d3d9's DebugSetMute serves both when they are linked together.
+   DLLEXPORT void __stdcall DebugSetMute() {}
++#endif
+ 
+   DLLEXPORT IDirect3D8* __stdcall Direct3DCreate8(UINT nSDKVersion) {
+     IDirect3D8* pDirect3D = nullptr;
+diff --git a/src/d3d8/meson.build b/src/d3d8/meson.build
+index 860d8472..5246c712 100644
+--- a/src/d3d8/meson.build
++++ b/src/d3d8/meson.build
+@@ -24,6 +24,14 @@ if platform != 'windows'
+   d3d8_link_depends += files('d3d8.sym')
+ endif
+ 
++if get_option('ps5')
++  # Linked into the title: a PS5 title cannot load libraries.
++  d3d8_dll = static_library(dxvk_name_prefix+'d3d8', d3d8_src,
++    dependencies        : [ lib_d3d9, util_dep, dxso_dep, dxvk_dep ],
++    include_directories : dxvk_include_path,
++    install             : true,
++  )
++else
+ d3d8_dll = shared_library(dxvk_name_prefix+'d3d8', d3d8_src, d3d8_res,
+   dependencies        : [ lib_d3d9, util_dep, dxso_dep, dxvk_dep ],
+   include_directories : dxvk_include_path,
+@@ -33,6 +41,7 @@ d3d8_dll = shared_library(dxvk_name_prefix+'d3d8', d3d8_src, d3d8_res,
+   link_depends        : [ d3d8_link_depends ],
+   kwargs              : dxvk_so_version,
+ )
++endif
+ 
+ d3d8_dep = declare_dependency(
+   link_with           : [ d3d8_dll ],
+diff --git a/src/d3d9/meson.build b/src/d3d9/meson.build
+index 2f459468..e275d220 100644
+--- a/src/d3d9/meson.build
++++ b/src/d3d9/meson.build
+@@ -57,6 +57,14 @@ if platform != 'windows'
+   d3d9_link_depends += files('d3d9.sym')
+ endif
+ 
++if get_option('ps5')
++  # Linked into the title: a PS5 title cannot load libraries.
++  d3d9_dll = static_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.process(d3d9_shaders),
++    dependencies        : [ dxso_dep, dxvk_dep ],
++    include_directories : dxvk_include_path,
++    install             : true,
++  )
++else
+ d3d9_dll = shared_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.process(d3d9_shaders), d3d9_res,
+   dependencies        : [ dxso_dep, dxvk_dep ],
+   include_directories : dxvk_include_path,
+@@ -66,6 +74,7 @@ d3d9_dll = shared_library(dxvk_name_prefix+'d3d9', d3d9_src, glsl_generator.proc
+   link_depends        : [ d3d9_link_depends ],
+   kwargs              : dxvk_so_version,
+ )
++endif
+ 
+ d3d9_dep = declare_dependency(
+   link_with           : [ d3d9_dll ],
+diff --git a/src/util/util_env.cpp b/src/util/util_env.cpp
+index c86c3abf..3e3052cf 100644
+--- a/src/util/util_env.cpp
++++ b/src/util/util_env.cpp
+@@ -12,6 +12,10 @@
+ #include <limits.h>
+ #endif
+ 
++#ifdef DXVK_PLATFORM_PS5
++#include <sys/stat.h>
++#endif
++
+ #include "util_env.h"
+ 
+ #include "./com/com_include.h"
+@@ -124,6 +128,9 @@ namespace dxvk::env {
+ 
+       SetThreadDescription(::GetCurrentThread(), wideName.data());
+     }
++#elif defined(DXVK_PLATFORM_PS5)
++    // The console's FreeBSD 9 libc has no pthread_setname_np; names are cosmetic.
++    (void)name;
+ #else
+     std::array<char, 16> posixName = {};
+     dxvk::str::strlcpy(posixName.data(), name.c_str(), 16);
+@@ -142,6 +149,22 @@ namespace dxvk::env {
+ 
+     widePath[length] = L'\0';
+     return !!CreateDirectoryW(widePath.data(), nullptr);
++#elif defined(DXVK_PLATFORM_PS5)
++    // libc++'s std::filesystem needs pathconf(), which no system module a PS5
++    // title loads exports. Folders are made 0777 so FTP can reach them.
++    std::string partial;
++    bool created = false;
++    for (size_t i = 0; i <= path.size(); i++) {
++      if (i == path.size() || path[i] == '/') {
++        if (!partial.empty() && ::mkdir(partial.c_str(), 0777) == 0) {
++          ::chmod(partial.c_str(), 0777);
++          created = true;
++        }
++      }
++      if (i < path.size())
++        partial += path[i];
++    }
++    return created;
+ #else
+     return std::filesystem::create_directories(path);
+ #endif
+diff --git a/src/util/util_version.h b/src/util/util_version.h
+index 995d8b94..c98c818b 100644
+--- a/src/util/util_version.h
++++ b/src/util/util_version.h
+@@ -6,6 +6,15 @@
+ 
+ #include "util_string.h"
+ 
++// BSD's <sys/types.h> (the PS5's libc) defines major() and minor() macros for
++// device numbers, which would rewrite the members below.
++#ifdef major
++#undef major
++#endif
++#ifdef minor
++#undef minor
++#endif
++
+ namespace dxvk {
+ 
+   /**
+diff --git a/src/vulkan/vulkan_loader.cpp b/src/vulkan/vulkan_loader.cpp
+index 17e9b629..5f074fab 100644
+--- a/src/vulkan/vulkan_loader.cpp
++++ b/src/vulkan/vulkan_loader.cpp
+@@ -7,8 +7,26 @@
+ #include "../util/util_string.h"
+ #include "../util/util_win32_compat.h"
+ 
++#ifdef DXVK_PLATFORM_PS5
++#include <SDL3/SDL_init.h>
++#include <SDL3/SDL_vulkan.h>
++#endif
++
+ namespace dxvk::vk {
+ 
++#ifdef DXVK_PLATFORM_PS5
++  // The Vulkan driver is linked into the title; SDL's PS5 video driver hands
++  // out its entry point. The WSI has initialized SDL video by now.
++  static std::pair<HMODULE, PFN_vkGetInstanceProcAddr> loadVulkanLibrary() {
++    if (!SDL_InitSubSystem(SDL_INIT_VIDEO) || !SDL_Vulkan_LoadLibrary(nullptr)) {
++      Logger::err(str::format("Vulkan: SDL could not provide the linked driver: ", SDL_GetError()));
++      return { };
++    }
++    auto proc = reinterpret_cast<PFN_vkGetInstanceProcAddr>(SDL_Vulkan_GetVkGetInstanceProcAddr());
++    Logger::info(str::format("Vulkan: linked driver, vkGetInstanceProcAddr @ 0x", std::hex, reinterpret_cast<uintptr_t>(proc)));
++    return std::make_pair(nullptr, proc);
++  }
++#else
+   static std::pair<HMODULE, PFN_vkGetInstanceProcAddr> loadVulkanLibrary() {
+     static const std::array<const char*, 2> dllNames = {{
+ #ifdef _WIN32
+@@ -40,6 +58,7 @@ namespace dxvk::vk {
+     Logger::err("Vulkan: vkGetInstanceProcAddr not found");
+     return { };
+   }
++#endif
+ 
+   LibraryLoader::LibraryLoader() {
+     std::tie(m_library, m_getInstanceProcAddr) = loadVulkanLibrary();
+diff --git a/src/wsi/sdl3/wsi_platform_sdl3.cpp b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+index 9975cdac..a4c27fc3 100644
+--- a/src/wsi/sdl3/wsi_platform_sdl3.cpp
++++ b/src/wsi/sdl3/wsi_platform_sdl3.cpp
+@@ -10,6 +10,14 @@
+ namespace dxvk::wsi {
+ 
+   Sdl3WsiDriver::Sdl3WsiDriver() {
++#ifdef DXVK_PLATFORM_PS5
++    // SDL3 is linked into the title: a PS5 title cannot load libraries. The
++    // table's return types drop SDL's const in two places; the ABI is the same.
++    libsdl = nullptr;
++    #define SDL_PROC(ret, name, params) \
++      name = reinterpret_cast<pfn_##name>(&::name);
++    #include "wsi_platform_sdl3_funcs.h"
++#else
+     libsdl = LoadLibraryA( // FIXME: Get soname as string from meson
+ #if defined(_WIN32)
+         "SDL3.dll"
+@@ -30,6 +38,7 @@ namespace dxvk::wsi {
+         throw DxvkError("SDL3 WSI: Failed to load " #name "."); \
+       }
+     #include "wsi_platform_sdl3_funcs.h"
++#endif
+ 
+     if (!SDL_InitSubSystem(SDL_INIT_VIDEO))
+       throw DxvkError("SDL3 WSI: Failed to initialize video subsystem."); \
+@@ -37,7 +46,8 @@ namespace dxvk::wsi {
+ 
+   Sdl3WsiDriver::~Sdl3WsiDriver() {
+     SDL_QuitSubSystem(SDL_INIT_VIDEO);
+-    FreeLibrary(libsdl);
++    if (libsdl)
++      FreeLibrary(libsdl);
+   }
+ 
+   std::vector<const char *> Sdl3WsiDriver::getInstanceExtensions() {
+diff --git a/src/wsi/wsi_platform.cpp b/src/wsi/wsi_platform.cpp
+index c6f12bd5..6b7c54b8 100644
+--- a/src/wsi/wsi_platform.cpp
++++ b/src/wsi/wsi_platform.cpp
+@@ -33,6 +33,9 @@ namespace dxvk::wsi {
+         // for other platforms however we _need_ to know which WSI to use!
+ #if defined(DXVK_WSI_WIN32)
+         hint = "Win32";
++#elif defined(DXVK_PLATFORM_PS5)
++        // A PS5 title has no environment to set; SDL3 is its only window system.
++        hint = "SDL3";
+ #else
+         throw DxvkError("DXVK_WSI_DRIVER environment variable unset");
+ #endif
+-- 
+2.55.0.windows.2
+
