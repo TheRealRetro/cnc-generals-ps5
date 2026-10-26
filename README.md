@@ -12,8 +12,9 @@ desktop platform pieces for PS5 ones.
 
 **Status: playable.** On a PS5 (firmware 13.60, ShadowMountPlus) with the
 retail 1.00 discs: the menus, skirmish, the campaign and its videos, Options,
-the DualSense and sound all work. Not yet tested: saving and loading, USB mouse
-and keyboard, LAN. See [Milestones](#milestones).
+the DualSense and sound all work, from an image with the game data or one
+without it ([below](#the-image-without-game-data)). Not yet tested: saving and
+loading, USB mouse and keyboard, LAN. See [Milestones](#milestones).
 
 Game data is **not** included. You need your own retail copy; the `.ffpkg`
 built from it contains EA's files and is for your own console only.
@@ -42,7 +43,7 @@ built from it contains EA's files and is for your own console only.
 | `scripts/extract-generals-data.sh` | rebuild the installed game folder from the retail disc copies |
 | `scripts/build-sdl3.sh`, `build-dxvk.sh`, `build-ffmpeg.sh` | SDL3, DXVK and FFmpeg static libraries for the PS5 |
 | `scripts/build-d3d8test.sh` | the D3D8 smoke test title, packed as `.ffpkg` |
-| `scripts/build-generals.sh`, `package-generals.sh` | the game title, and its `.ffpkg` with your game data |
+| `scripts/build-generals.sh`, `package-generals.sh` | the game title, and its `.ffpkg` with your game data or (`--without-data`) without |
 | `ps5/runtime/` | title lifecycle (stderr to klog, exit through the shell), a virtual current directory, libc functions the console lacks |
 | `ps5/tools/link-title.sh` | link with RADV (PS5_Vulkan's recipe), sign, assemble the title folder |
 | `ps5/d3d8test/` | the D3D8 smoke test |
@@ -118,6 +119,26 @@ Pack any title folder:
 ```bash
 bash scripts/mkffpkg.sh dist/PPSA99203 out/PPSA99203.ffpkg
 ```
+
+## The image without game data
+
+`package-generals.sh --without-data` packs `out/PPSA99203-generals-nodata.ffpkg`:
+the game's code, its PS5 runtime and the Liberation fonts, nothing of EA's.
+That is the image to share. Each player provides their own game files:
+
+1. From your own Generals installation (the folder with `INI.big`), copy every
+   `.big` file and the `Data` folder to `/data/generals` on the console (FTP).
+   A 1.08-patched installation is best (see [Game data version](#game-data-version)).
+2. Install the image as below and start the game.
+
+The game looks for `INI.big` in the image itself, then in `/data/generals`,
+then in `generals` on a USB drive if the console lets the game see it. With no
+game data it shows a notification saying what to copy, and closes. Both were
+tested on the console (2026-10-26): the notification without data, and the
+game with the data in `/data/generals`.
+
+Distributing the image means distributing GPL code: offer its source with it
+(this repository, the patches it applies, and the pinned upstreams).
 
 ## Installing on the PS5
 

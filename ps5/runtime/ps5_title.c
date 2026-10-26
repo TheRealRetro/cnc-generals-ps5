@@ -164,6 +164,56 @@ int ps5_title_log_file(const char *path)
     return 0;
 }
 
+int sceUserServiceInitialize(const void *params);
+int sceUserServiceGetInitialUser(int32_t *user_id);
+int sceUserServiceGetUserName(int32_t user_id, char *name, size_t size);
+
+int ps5_title_user_name(char *name, size_t size)
+{
+    if (name == NULL || size == 0)
+        return -1;
+    name[0] = '\0';
+    /* Already initialized (SDL's controller driver does it first) is fine. */
+    (void)sceUserServiceInitialize(NULL);
+    int32_t user = -1;
+    char raw[64];
+    memset(raw, 0, sizeof(raw));
+    const int got_user = sceUserServiceGetInitialUser(&user);
+    const int got_name = got_user < 0 || user < 0 ? -1 : sceUserServiceGetUserName(user, raw, sizeof(raw) - 1);
+    if (got_name < 0) {
+        ps5_say("user name: initial user %#x (%d), name %#x", (unsigned)got_user, (int)user, (unsigned)got_name);
+        return -1;
+    }
+    size_t length = 0;
+    for (const char *c = raw; *c != '\0' && length + 1 < size; c++) {
+        if (*c >= 0x20 && *c < 0x7f)
+            name[length++] = *c;
+    }
+    name[length] = '\0';
+    return length > 0 ? 0 : -1;
+}
+
+/* The request libkernel's sceKernelSendNotificationRequest takes: the text
+ * at byte 45 (the payload SDK's samples/hello_world and notify_debug). */
+typedef struct {
+    char reserved[45];
+    char message[3075];
+} ps5_notify_request;
+
+int sceKernelSendNotificationRequest(int device, ps5_notify_request *request, size_t size, int blocking);
+
+int ps5_title_notify(const char *message)
+{
+    ps5_say("notify: %s", message);
+    ps5_notify_request request;
+    memset(&request, 0, sizeof(request));
+    snprintf(request.message, sizeof(request.message), "%s", message);
+    const int result = sceKernelSendNotificationRequest(0, &request, sizeof(request), 0);
+    if (result < 0)
+        ps5_say("notify: sceKernelSendNotificationRequest %#x", (unsigned)result);
+    return result;
+}
+
 void ps5_say(const char *format, ...)
 {
     va_list args;

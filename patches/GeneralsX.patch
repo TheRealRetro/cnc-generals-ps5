@@ -1,7 +1,7 @@
 From bca473ca910e3147a82a777ef003987a6fcc9854 Mon Sep 17 00:00:00 2001
 From: TheRealRetro <225269622+TheRealRetro@users.noreply.github.com>
 Date: Mon, 26 Oct 2026 14:25:07 -0400
-Subject: [PATCH] PS5 port of C&C Generals: GeneralsX changes
+Subject: [PATCH 1/2] PS5 port of C&C Generals: GeneralsX changes
 
 Changes for the native PS5 homebrew build (see cnc-generals-ps5).
 
@@ -2331,6 +2331,186 @@ index 8c41a5f46..1d6261ba5 100644
 +        target_compile_definitions(libzlib PRIVATE ${_symbol}=gxzlib_${_symbol})
 +    endforeach()
 +endif()
+-- 
+2.55.0.windows.2
+
+
+From 487f55a75997390ca00e2ad9a2cf7dda1bcb9b69 Mon Sep 17 00:00:00 2001
+From: TheRealRetro <225269622+TheRealRetro@users.noreply.github.com>
+Date: Mon, 26 Oct 2026 16:43:25 -0400
+Subject: [PATCH 2/2] PS5: game data outside the image, console profile name as
+ player name
+
+The PS5 build finds the game data in the title folder or, for an image
+without it, in /data/generals (or generals on a USB drive), and shows a
+console notification when there is none. The player's default name in
+skirmish and LAN is the console user's profile name, and a skirmish slot
+list saved with an empty local name no longer blanks the name box.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../Source/GameNetwork/IPEnumeration.cpp      | 16 +++++
+ .../Menus/SkirmishGameOptionsMenu.cpp         | 12 ++++
+ Generals/Code/Main/SDL3Main.cpp               | 63 +++++++++++++++++--
+ 3 files changed, 87 insertions(+), 4 deletions(-)
+
+diff --git a/Core/GameEngine/Source/GameNetwork/IPEnumeration.cpp b/Core/GameEngine/Source/GameNetwork/IPEnumeration.cpp
+index c90c987f1..9b6bce98a 100644
+--- a/Core/GameEngine/Source/GameNetwork/IPEnumeration.cpp
++++ b/Core/GameEngine/Source/GameNetwork/IPEnumeration.cpp
+@@ -192,8 +192,23 @@ void IPEnumeration::addNewIP( UnsignedByte a, UnsignedByte b, UnsignedByte c, Un
+ 	}
+ }
+ 
++#if defined(SAGE_PLATFORM_PS5)
++// GeneralsX @feature PS5 26/10/2026 The console user's profile name (the port's ps5/runtime/ps5_title.c)
++extern "C" int ps5_title_user_name(char *name, size_t size);
++#endif
++
+ AsciiString IPEnumeration::getMachineName()
+ {
++#if defined(SAGE_PLATFORM_PS5)
++	// GeneralsX @feature PS5 26/10/2026 A console title has no host name. The profile name of the
++	// user playing stands for the machine: the default player name in skirmish and LAN games.
++	char userName[32];
++	if (ps5_title_user_name(userName, sizeof(userName)) == 0)
++	{
++		return AsciiString(userName);
++	}
++	return AsciiString("Player");
++#else
+ 	if (!m_isWinsockInitialized)
+ 	{
+ 		WORD verReq = MAKEWORD(2, 2);
+@@ -220,6 +235,7 @@ AsciiString IPEnumeration::getMachineName()
+ 	}
+ 
+ 	return AsciiString(hostname);
++#endif
+ }
+ 
+ 
+diff --git a/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp b/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+index e8b647693..0ec378a7d 100644
+--- a/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
++++ b/Generals/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+@@ -1263,6 +1263,18 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
+ 	TheSkirmishGameInfo->setSlot(1, gSlot);
+ 
+ 	ParseAsciiStringToGameInfo(TheSkirmishGameInfo, prefs.getSlotList());
++	// GeneralsX @bugfix PS5 26/10/2026 The saved slot list replaces the local player's name, and one
++	// saved without a name (the PS5 build first had no machine name to default to) left the name box
++	// blank in every later game. A nameless local player gets the default name again.
++	{
++		GameSlot *localSlot = TheSkirmishGameInfo->getSlot(0);
++		UnicodeString savedName = localSlot ? localSlot->getName() : UnicodeString::TheEmptyString;
++		savedName.trim();
++		if (localSlot && localSlot->isHuman() && savedName.isEmpty())
++		{
++			localSlot->setName(prefs.getUserName());
++		}
++	}
+ 	TheSkirmishGameInfo->setSeed(GetTickCount());
+ 
+ 	UnsignedInt isPreorder = 0;
+diff --git a/Generals/Code/Main/SDL3Main.cpp b/Generals/Code/Main/SDL3Main.cpp
+index 227a6901b..133def03e 100644
+--- a/Generals/Code/Main/SDL3Main.cpp
++++ b/Generals/Code/Main/SDL3Main.cpp
+@@ -55,6 +55,8 @@
+ 
+ #ifdef SAGE_PLATFORM_PS5
+ #include <cerrno>
++#include <dirent.h>
++#include <strings.h>
+ #include <sys/stat.h>
+ #include "ps5_title.h"
+ #endif
+@@ -214,12 +216,53 @@ static void FilterPipeWireOpenAL()
+ }
+ 
+ #ifdef SAGE_PLATFORM_PS5
++/**
++ * Whether a folder holds the game's data: its INI.big, in any letter case.
++ */
++static bool PS5FolderHasGameData(const char *folder)
++{
++	DIR *dir = opendir(folder);
++	if (dir == nullptr) {
++		return false;
++	}
++	bool found = false;
++	while (const struct dirent *entry = readdir(dir)) {
++		if (strcasecmp(entry->d_name, "INI.big") == 0) {
++			found = true;
++			break;
++		}
++	}
++	closedir(dir);
++	return found;
++}
++
++/**
++ * GeneralsX @feature PS5 26/10/2026 Where the player's game data is: in the title folder when the
++ * image carries it (package-generals.sh), else where the player copied it, for an image built
++ * without it (package-generals.sh --without-data). /data is the console's, which ShadowMountPlus
++ * gives the title; a USB drive only where the console lets the title see it.
++ * Returns nullptr when there is none.
++ */
++static const char *FindPS5GameData()
++{
++	static const char *const folders[] = {
++		"/app0", "/data/generals", "/mnt/usb0/generals", "/mnt/usb1/generals",
++	};
++	for (const char *folder : folders) {
++		if (PS5FolderHasGameData(folder)) {
++			return folder;
++		}
++	}
++	ps5_say("no game data (INI.big) in /app0, /data/generals, /mnt/usb0/generals or /mnt/usb1/generals");
++	return nullptr;
++}
++
+ /**
+  * SetupPS5Title
+  *
+  * GeneralsX @build PS5 13/10/2026 The console title's environment, before anything else runs:
+- * standard error to the kernel log, the game data in the title folder (/app0, which the
+- * virtual current directory also starts in: ps5/runtime/ps5_vcwd.c), and HOME pointing at
++ * standard error to the kernel log, the game data (FindPS5GameData; the virtual current directory
++ * stays /app0 for the title's own files: ps5/runtime/ps5_vcwd.c), and HOME pointing at
+  * writable storage for Options.ini, saves and replays: the title's download data when the
+  * console gives it one, else a folder beside the game. A title has no environment of its own.
+  */
+@@ -246,14 +289,26 @@ static void SetupPS5Title()
+ 		chmod(home, 0777);
+ 	}
+ 	setenv("HOME", home, 1);
+-	setenv("CNC_GENERALS_PATH", "/app0/", 1);
++
++	const char *gameData = FindPS5GameData();
++	if (gameData == nullptr) {
++		ps5_title_notify("C&C Generals: game data not found. Copy the files of your own "
++			"Generals install (INI.big and the other .big files, and the Data folder) "
++			"to /data/generals on the console, then start the game again.");
++		ps5_title_exit(1);
++	}
++	// The BIG archives load from there; a loose file the title folder (the current directory)
++	// lacks, the Data folder's videos and cursors among them, is looked up there as well.
++	char gameDataPath[64];
++	snprintf(gameDataPath, sizeof(gameDataPath), "%s/", gameData);
++	setenv("CNC_GENERALS_PATH", gameDataPath, 1);
+ 	setenv("DXVK_WSI_DRIVER", "SDL3", 1);
+ 	// The Vulkan driver's compiled-shader cache: it otherwise tries the read-only title folder and
+ 	// gives up, compiling every shader again on each run.
+ 	char shaderCache[64];
+ 	snprintf(shaderCache, sizeof(shaderCache), "%s/radv-shader-cache", home);
+ 	setenv("MESA_SHADER_CACHE_DIR", shaderCache, 0);
+-	ps5_say("game data /app0, user data %s", home);
++	ps5_say("game data %s, user data %s", gameData, home);
+ }
+ #endif
+ 
 -- 
 2.55.0.windows.2
 
