@@ -219,8 +219,9 @@ from that avoids the class of problem altogether.
 
 ## Licence
 
-GPL-3.0-or-later, with EA's additional terms: see [LICENSE.md](LICENSE.md)
-(EA's source release, as GeneralsX carries it). The patches to SDL (zlib) and
+GPL-3.0-or-later ([LICENSE](LICENSE)), with Electronic Arts' additional terms
+under GPL section 7 ([EA-ADDITIONAL-TERMS.md](EA-ADDITIONAL-TERMS.md)): EA's
+source release, as GeneralsX carries it. The patches to SDL (zlib) and
 DXVK (zlib/libpng) are under their projects' licences; FFmpeg is built as
 LGPL 2.1+. Command & Conquer is a trademark of Electronic Arts; this project is
 not endorsed by EA or Sony. No game data is included: you need your own copy.
